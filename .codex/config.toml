@@ -1,0 +1,5 @@
+# Project Codex config (App + CLI share this when the project is trusted)
+
+[mcp_servers.opencode_bridge]
+command = "bash"
+args = ["scripts/mcp-bridge.sh"]

@@ -1,0 +1,26 @@
+# Secrets
+.env
+.env.local
+*.pem
+
+# Runtime artifacts
+runs/**
+!runs/.gitkeep
+briefs/**
+!briefs/.gitkeep
+!briefs/.gitkeep
+*.log
+
+# Node
+node_modules/
+packages/bridge/dist/
+packages/bridge/*.tsbuildinfo
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# OpenCode local cache (if any)
+.opencode/cache/

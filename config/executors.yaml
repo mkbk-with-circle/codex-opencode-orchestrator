@@ -1,0 +1,17 @@
+executors:
+  mock:
+    type: mock
+    description: "In-process fake executor for control-plane smoke tests"
+    options: {}
+
+  siliconflow-opencode:
+    type: opencode-http
+    description: "Local OpenCode serve + SiliconFlow models"
+    options:
+      baseUrlEnv: OPENCODE_BASE_URL
+      defaultBaseUrl: "http://127.0.0.1:4096"
+      # OpenCode model id: provider/model
+      model: "siliconflow/deepseek-ai/DeepSeek-V3"
+      agent: build
+      autoStartServe: true
+      servePort: 4096

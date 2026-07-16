@@ -1,0 +1,1 @@
+Playground target for Codex → OpenCode dispatch demo.

@@ -1,0 +1,22 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "siliconflow": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "SiliconFlow",
+      "options": {
+        "baseURL": "https://api.siliconflow.com/v1",
+        "apiKey": "{env:SILICONFLOW_API_KEY}"
+      },
+      "models": {
+        "deepseek-ai/DeepSeek-V3": {
+          "name": "DeepSeek V3"
+        },
+        "Qwen/Qwen2.5-Coder-32B-Instruct": {
+          "name": "Qwen2.5 Coder 32B"
+        }
+      }
+    }
+  },
+  "model": "siliconflow/deepseek-ai/DeepSeek-V3"
+}
