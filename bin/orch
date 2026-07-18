@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+# 编排器便捷入口（把本仓 bin/ 加到 PATH 后，任意目录可用）。
+#   orch              → 在当前目录启动 Codex，并 set-workspace=$PWD
+#   orch exec '…'     → 非交互
+#   orch watch […]   → 定时轮询
+#   orch doctor
+#   orch install
+#   orch workspace [path]
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+CMD="${1:-}"
+
+case "$CMD" in
+  ""|shell|cli)
+    shift || true
+    exec bash "$ROOT/scripts/codex-in-workspace.sh" "$@"
+    ;;
+  exec)
+    shift
+    exec bash "$ROOT/scripts/codex-in-workspace.sh" exec "$@"
+    ;;
+  watch)
+    shift
+    exec bash "$ROOT/scripts/watch-run.sh" "$@"
+    ;;
+  doctor)
+    exec bash "$ROOT/scripts/doctor.sh"
+    ;;
+  install)
+    shift
+    exec bash "$ROOT/scripts/install.sh" "$@"
+    ;;
+  workspace|set-workspace)
+    shift
+    if [[ -n "${1:-}" ]]; then
+      exec bash "$ROOT/scripts/set-workspace.sh" "$@"
+    fi
+    cd "$ROOT/packages/bridge"
+    exec npx tsx src/cli.ts workspace
+    ;;
+  smoke)
+    exec bash "$ROOT/scripts/smoke-dispatch.sh"
+    ;;
+  help|-h|--help)
+    cat <<EOF
+orch — Codex ↔ OpenCode Orchestrator
+
+  orch                 当前目录启动 Codex CLI（并绑定 TARGET_WORKSPACE）
+  orch exec 'prompt'   非交互执行
+  orch watch [flags]   定时轮询 run（见 scripts/watch-run.sh）
+  orch doctor          健康检查
+  orch install [--smoke]
+  orch workspace [path]
+  orch smoke           mock 冒烟
+
+安装: bash $ROOT/scripts/install.sh
+文档: $ROOT/docs/CLI.md
+EOF
+    ;;
+  *)
+    echo "未知子命令: $CMD（试 orch help）" >&2
+    exit 1
+    ;;
+esac

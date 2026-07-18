@@ -1,24 +1,35 @@
 ---
 name: opencode-dispatch
 description: >
-  Dispatch a finalized plan (plans/current.md) to OpenCode/mock via MCP opencode-bridge.
-  Use when the user says /dispatch, asks to start execution, or invoke $opencode-dispatch.
+  把已落盘 plan 派给 OpenCode；必须明确目标工作目录（业务项目路径）。
+  当用户说 /dispatch、开始执行，或调用 $opencode-dispatch 时使用。
 ---
 
-# OpenCode Dispatch
+# OpenCode 派工
 
-You are preparing work for an **executor** (OpenCode or mock). You stay the reviewer/brain.
+## 双目录模型（必读）
 
-## Steps
+| 目录 | 作用 | 你在 Codex 里打开谁 |
+|------|------|-------------------|
+| **编排仓** `codex-opencode-orchestrator` | Skills / MCP / plans / runs | **打开这个** 才能用 `/dispatch` 等 |
+| **业务仓**（Target Workspace） | OpenCode 真正改代码 / build 的地方 | 用 `set_workspace` 或 dispatch 的 `workspace` 指定 |
 
-1. Ensure `plans/current.md` exists and matches what the user agreed.
-2. Call MCP tool `dispatch` from server `opencode-bridge`.
-   - First call usually returns `needsConfirm: true` + `confirmToken` + `briefPreview`.
-3. Show the brief to the user and ask for confirmation (unless they already said "skip confirm" / config has confirm off).
-4. On confirm, call `dispatch` again with the same `confirmedToken`.
-5. Report `runId`, `status`, `sessionId`, and `worktreePath`.
+派工前先调用 `get_workspace`，把返回的 `targetWorkspace` 展示给用户确认。
 
-## Notes
+## 步骤
 
-- Prefer executor from config; override with `executorId` only if user asks (`mock` vs `siliconflow-opencode`).
-- Do not start coding yourself unless the user explicitly asks you to implement instead of dispatching.
+1. `get_workspace`：若还是默认 `playground` 且用户要做真实项目 → 调用 `set_workspace` 或要求用户提供绝对路径。  
+2. 确认 plan 已落盘（`plans/...`）。  
+3. `dispatch`，**显式传** `workspace: "/绝对路径/业务项目"`（推荐），或依赖已 set 的默认。  
+4. 确认 brief 时重点展示 **Working directory**。  
+5. 回报 `runId` + **`workspace` 绝对路径**（用户必须知道 OpenCode 在哪 build）。
+
+## 参数
+
+- `workspace` — OpenCode cwd（绝对路径优先）  
+- `planPath` / `executorId` / `confirmedToken` / …
+
+## 禁止
+
+- 不要默认假设业务代码在编排仓的 `playground/`（演示除外）  
+- 不要在未展示 workspace 的情况下开始派工  

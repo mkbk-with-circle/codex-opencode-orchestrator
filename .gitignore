@@ -2,12 +2,12 @@
 .env
 .env.local
 *.pem
+config/workspace.local.yaml
 
 # Runtime artifacts
 runs/**
 !runs/.gitkeep
 briefs/**
-!briefs/.gitkeep
 !briefs/.gitkeep
 *.log
 

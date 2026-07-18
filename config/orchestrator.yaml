@@ -8,7 +8,8 @@ default_executor: mock
 # When true, dispatch creates a git worktree under runs/<id>/worktree
 use_worktree: true
 
-# Relative path used as the default workspace for demos
+# Relative path used as the default workspace for demos ONLY.
+# Real projects: set TARGET_WORKSPACE via scripts/set-workspace.sh or dispatch.workspace
 default_workspace: playground
 
 gates:

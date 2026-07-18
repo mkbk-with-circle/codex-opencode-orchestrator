@@ -1,36 +1,31 @@
-# Codex ↔ OpenCode Orchestrator
+# Codex ↔ OpenCode 编排器
 
-You are the **brain** in this repo. OpenCode (via MCP `opencode-bridge`) is the **hands**.
+你是大脑。OpenCode 是手脚，工作在**业务仓（Target Workspace）**。
 
-## Slash commands (map to skills)
+安装后 Skills 在 `~/.agents/skills`，MCP `opencode_bridge` 在用户配置 —— **不必**只在打开编排仓时才能用。
 
-| Slash | Skill | Action |
-|-------|--------|--------|
-| `/dispatch` | `$opencode-dispatch` | Turn `plans/current.md` into a brief and start an executor run |
-| `/status` | `$opencode-supervise` | Show current run status / todo / diff summary |
-| `/interrupt` | `$opencode-supervise` | Abort the active OpenCode (or mock) session |
-| `/rework` | `$opencode-supervise` | Abort + re-dispatch with updated instructions |
-| `/progress` | `$opencode-supervise` | Ask executor for a short progress update |
-| `/review` | `$opencode-review` | Verify result against the original plan |
+## 双目录
 
-## Workflow
+1. **编排仓**（本仓库）→ plans / runs / bridge  
+2. **业务仓** → OpenCode 改代码 / build  
+   - `set_workspace` / `bash scripts/set-workspace.sh ~/Projects/MyApp` / `orch workspace …`  
+   - 或 `/dispatch` 时带 `workspace=/绝对路径`
 
-1. Agree a plan with the user; write it to `plans/current.md` (self-contained, with acceptance checks).
-2. Call MCP `dispatch` (or `$opencode-dispatch`). Default config requires confirming the brief before start (`confirm_before_dispatch: true`).
-3. Supervise with `status` / `progress` / `interrupt` / `rework`.
-4. Finish with `$opencode-review`: compare plan vs diff, run configured test commands, output PASS/FAIL.
+## Slash
 
-## Hard rules
+| Slash | 作用 |
+|-------|------|
+| `/dispatch` | 派工（先确认 workspace） |
+| `/status` `/progress` `/interrupt` `/rework` | 监督 |
+| `/review` | 终验 |
 
-- Prefer MCP tools from `opencode-bridge`; do not raw-curl OpenCode unless MCP is down.
-- Never commit secrets (`.env`, API keys).
-- Gates: destructive shell and mass deletes require explicit user confirmation (see `config/orchestrator.yaml`).
-- Do not trust the executor's self-report — re-check diffs and tests yourself.
-- Keep execution scoped to the brief; reject drive-by refactors.
+定时盯 run：用户可挂 `orch watch`（见 `docs/WATCH.md`），不是你自己 sleep 循环。
 
-## Paths
+派工前可说：先 `get_workspace` 给我看 OpenCode 会去哪。
 
-- Plans: `plans/`
-- Briefs: `briefs/`
-- Runs: `runs/<runId>/state.json`
-- Playground (demo target): `playground/`
+## 硬性规则
+
+- 优先 MCP；不提交密钥。  
+- 破坏性操作需确认。  
+- 不轻信执行器自评。  
+- **每次 dispatch 必须让用户知道 `workspace` 绝对路径。**

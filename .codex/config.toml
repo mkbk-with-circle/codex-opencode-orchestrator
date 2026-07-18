@@ -1,4 +1,6 @@
-# Project Codex config (App + CLI share this when the project is trusted)
+# Project Codex config (App：打开本仓时生效)。
+# CLI 任意目录用法：请跑一次 `bash scripts/install.sh`
+# → 会把「绝对路径」MCP 写入 ~/.codex/config.toml，并把 Skills 链到 ~/.agents/skills
 
 [mcp_servers.opencode_bridge]
 command = "bash"

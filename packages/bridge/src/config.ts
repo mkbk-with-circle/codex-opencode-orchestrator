@@ -14,7 +14,14 @@ export function repoRoot(): string {
 }
 
 export function loadDotEnv(root = repoRoot()): void {
-  const envPath = path.join(root, ".env");
+  // User-level workspace + secrets (Codex App 不一定继承 zshrc)
+  const home = process.env.HOME || "";
+  loadEnvFile(path.join(home, ".config/codex-opencode-orchestrator/workspace.env"));
+  loadEnvFile(path.join(home, ".config/codex-opencode-orchestrator/secrets.env"));
+  loadEnvFile(path.join(root, ".env"));
+}
+
+function loadEnvFile(envPath: string): void {
   if (!fs.existsSync(envPath)) return;
   const text = fs.readFileSync(envPath, "utf8");
   for (const line of text.split("\n")) {

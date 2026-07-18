@@ -7,10 +7,12 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import {
   dispatch,
+  getWorkspaceTool,
   interrupt,
   progress,
   reviewContext,
   rework,
+  setWorkspaceTool,
   status,
 } from "./orchestrator.js";
 import { loadDotEnv, repoRoot } from "./config.js";
@@ -27,7 +29,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     {
       name: "dispatch",
       description:
-        "Create brief from plans/current.md and start executor (mock or OpenCode). If confirm_before_dispatch, returns confirmToken first.",
+        "从 plan 生成 brief 并在目标工作目录启动执行器。务必确认返回的 workspace 路径。可用 workspace 参数指定绝对路径。",
       inputSchema: {
         type: "object",
         properties: {
@@ -36,7 +38,33 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           confirm: { type: "boolean" },
           confirmedToken: { type: "string" },
           extraInstructions: { type: "string" },
+          workspace: {
+            type: "string",
+            description:
+              "OpenCode 工作目录（绝对路径或相对编排仓）。外部项目请用绝对路径。",
+          },
         },
+      },
+    },
+    {
+      name: "get_workspace",
+      description:
+        "查看当前解析出的 OpenCode 目标工作目录（编排仓 vs 业务仓）。",
+      inputSchema: { type: "object", properties: {} },
+    },
+    {
+      name: "set_workspace",
+      description:
+        "设置用户级默认目标工作目录（写入 ~/.config/.../workspace.env）。",
+      inputSchema: {
+        type: "object",
+        properties: {
+          path: {
+            type: "string",
+            description: "业务项目绝对路径，如 /Users/me/Projects/MyPet",
+          },
+        },
+        required: ["path"],
       },
     },
     {
@@ -108,7 +136,14 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
           confirm: args.confirm as boolean | undefined,
           confirmedToken: args.confirmedToken as string | undefined,
           extraInstructions: args.extraInstructions as string | undefined,
+          workspace: args.workspace as string | undefined,
         });
+        break;
+      case "get_workspace":
+        result = await getWorkspaceTool();
+        break;
+      case "set_workspace":
+        result = await setWorkspaceTool(String(args.path || ""));
         break;
       case "status":
         result = await status(args.runId as string | undefined);

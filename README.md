@@ -1,52 +1,44 @@
 # Codex ↔ OpenCode Orchestrator
 
-Control plane for **Codex App (brain)** + **OpenCode (hands)**.
+**Codex（大脑）** 规划 / 监督 · **OpenCode（手脚）** 在业务仓改代码。
 
-## What this is
-
-1. You finalize a plan in Codex App → `plans/current.md`
-2. `$opencode-dispatch` / `/dispatch` asks MCP bridge to start a run
-3. Supervise with `/status` `/progress` `/interrupt` `/rework`
-4. `/review` verifies against the plan
-
-## Quick start
+## Clone 后 3 步
 
 ```bash
-cd ~/Desktop/codex-opencode-orchestrator
-cp .env.example .env
-# Edit .env — set SILICONFLOW_API_KEY
-
-# Bridge deps
-cd packages/bridge && npm install && npm run build && cd ../..
-
-# Optional: install OpenCode
-bash scripts/setup-opencode.sh
-
-# Smoke test (mock executor)
-bash scripts/smoke-dispatch.sh
+git clone <this-repo> && cd codex-opencode-orchestrator
+bash scripts/install.sh --smoke          # 构建 + 配置本机 Codex CLI（MCP/Skills）
+bash scripts/set-workspace.sh ~/Projects/YourApp
+cd ~/Projects/YourApp && bash /path/to/codex-opencode-orchestrator/scripts/codex-in-workspace.sh
 ```
 
-### Codex App
+把 `bin/` 加进 PATH 后可简写为 `orch` / `orch doctor` / `orch watch`。
 
-1. Open this folder as a trusted project in Codex App
-2. MCP is declared in [`.codex/config.toml`](.codex/config.toml)
-3. Use slash commands listed in [`AGENTS.md`](AGENTS.md)
+| 文档 | 内容 |
+|------|------|
+| [docs/CLI.md](docs/CLI.md) | Codex CLI 工作流（推荐） |
+| [docs/WATCH.md](docs/WATCH.md) | 定时轮询监督 |
+| [docs/WORKSPACE.md](docs/WORKSPACE.md) | 业务仓怎么指定 |
+| [`AGENTS.md`](AGENTS.md) | 斜杠命令与规则 |
 
-### Switch executor
+## 日常 workflow
 
-- Dev / control-plane only: `default_executor: mock` in `config/orchestrator.yaml`
-- Real OpenCode: `default_executor: siliconflow-opencode` (needs OpenCode serve + SiliconFlow key)
+1. 在 Codex 里把 plan 落到 `plans/`（编排仓）
+2. `/dispatch` → MCP bridge 启动 run（OpenCode 在 **TARGET_WORKSPACE**）
+3. `/status` 或挂着 `orch watch --interval 30`
+4. `/review` 对照 plan 验收
 
-## Security
+## 执行器
 
-- Never commit `.env`
-- If a key was pasted in chat, rotate it in the SiliconFlow console
-- Destructive shell / mass delete stay behind confirmation gates
+- 默认演示：`config/orchestrator.yaml` → `default_executor: mock`
+- 真跑 OpenCode：改为 `siliconflow-opencode`，并配置 `.env` 里的 `SILICONFLOW_API_KEY`（`cp .env.example .env`）
 
-## Layout
+可选：`bash scripts/setup-opencode.sh`
 
-See plan: Skills under `.agents/skills/`, bridge under `packages/bridge/`, state under `plans/` `briefs/` `runs/`.
+## 安全
 
-## Remote SSH (phase 2)
+- 不要提交 `.env`
+- 破坏性 shell / 批量删除需确认门禁
 
-`config/orchestrator.yaml` reserves `ssh_remote` for `ymy@162.105.87.147`. Not implemented in v1.
+## 布局
+
+`.agents/skills/` · `packages/bridge/` · `plans/` `briefs/` `runs/` · `scripts/install.sh`

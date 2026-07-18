@@ -1,13 +1,15 @@
 #!/usr/bin/env node
 /**
- * CLI for smoke tests without MCP (used by scripts/smoke-dispatch.sh)
+ * CLI for smoke tests without MCP
  */
 import {
   dispatch,
+  getWorkspaceTool,
   interrupt,
   progress,
   reviewContext,
   rework,
+  setWorkspaceTool,
   status,
 } from "./orchestrator.js";
 import { loadDotEnv } from "./config.js";
@@ -30,8 +32,22 @@ async function main() {
         confirmedToken: flag("--token"),
         extraInstructions: flag("--extra"),
         planPath: flag("--plan"),
+        workspace: flag("--workspace"),
       });
       console.log(JSON.stringify(out, null, 2));
+      break;
+    }
+    case "workspace":
+    case "get-workspace":
+      console.log(JSON.stringify(await getWorkspaceTool(), null, 2));
+      break;
+    case "set-workspace": {
+      const p = flag("--path") || rest.find((x) => !x.startsWith("--") && x !== "set-workspace");
+      if (!p) {
+        console.error("用法: set-workspace --path /绝对路径/到业务项目");
+        process.exit(1);
+      }
+      console.log(JSON.stringify(await setWorkspaceTool(p), null, 2));
       break;
     }
     case "status":
@@ -65,7 +81,7 @@ async function main() {
       break;
     default:
       console.error(
-        "Usage: cli.ts <dispatch|status|interrupt|rework|progress|review> [...flags]",
+        "用法: cli.ts <dispatch|workspace|set-workspace|status|interrupt|rework|progress|review>",
       );
       process.exit(1);
   }
