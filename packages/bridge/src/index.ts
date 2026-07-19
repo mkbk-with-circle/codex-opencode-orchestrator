@@ -9,11 +9,13 @@ import {
   dispatch,
   getWorkspaceTool,
   interrupt,
+  listPlansTool,
   progress,
   reviewContext,
   rework,
   setWorkspaceTool,
   status,
+  writePlanTool,
 } from "./orchestrator.js";
 import { loadDotEnv, repoRoot } from "./config.js";
 
@@ -27,35 +29,15 @@ const server = new Server(
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: [
     {
-      name: "dispatch",
-      description:
-        "从 plan 生成 brief 并在目标工作目录启动执行器。务必确认返回的 workspace 路径。可用 workspace 参数指定绝对路径。",
-      inputSchema: {
-        type: "object",
-        properties: {
-          planPath: { type: "string" },
-          executorId: { type: "string" },
-          confirm: { type: "boolean" },
-          confirmedToken: { type: "string" },
-          extraInstructions: { type: "string" },
-          workspace: {
-            type: "string",
-            description:
-              "OpenCode 工作目录（绝对路径或相对编排仓）。外部项目请用绝对路径。",
-          },
-        },
-      },
-    },
-    {
       name: "get_workspace",
       description:
-        "查看当前解析出的 OpenCode 目标工作目录（编排仓 vs 业务仓）。",
+        "查看是否已绑定业务工作目录、plansDir。未绑定则 bound=false（可调用；其它工具会拒绝）。",
       inputSchema: { type: "object", properties: {} },
     },
     {
       name: "set_workspace",
       description:
-        "设置用户级默认目标工作目录（写入 ~/.config/.../workspace.env）。",
+        "绑定业务工作目录（唯一入口）。之后 write_plan/dispatch/status/review 强制只在此目录。",
       inputSchema: {
         type: "object",
         properties: {
@@ -68,8 +50,55 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       },
     },
     {
+      name: "write_plan",
+      description:
+        "把 plan 写入已绑定业务仓的 .orchestrator/plans/<task>.md（程序强制；未绑定则报错）。会自动写入 workspace frontmatter。",
+      inputSchema: {
+        type: "object",
+        properties: {
+          task: {
+            type: "string",
+            description: "任务名 / 文件名（如 pku-treehole-favorites）",
+          },
+          content: {
+            type: "string",
+            description: "Markdown 正文（可含或不含 frontmatter；程序会注入 workspace）",
+          },
+          overwrite: { type: "boolean" },
+        },
+        required: ["task", "content"],
+      },
+    },
+    {
+      name: "list_plans",
+      description: "列出已绑定业务仓 .orchestrator/plans/ 下的 plan。未绑定则报错。",
+      inputSchema: { type: "object", properties: {} },
+    },
+    {
+      name: "dispatch",
+      description:
+        "从已绑定目录的 plan 派工。未绑定则报错；workspace 参数若提供必须等于绑定目录。",
+      inputSchema: {
+        type: "object",
+        properties: {
+          planPath: {
+            type: "string",
+            description: "任务名、相对 plans 文件名，或绑定目录内的绝对路径",
+          },
+          executorId: { type: "string" },
+          confirm: { type: "boolean" },
+          confirmedToken: { type: "string" },
+          extraInstructions: { type: "string" },
+          workspace: {
+            type: "string",
+            description: "必须与已绑定目录一致；省略则用绑定目录",
+          },
+        },
+      },
+    },
+    {
       name: "status",
-      description: "Poll active or specified run status, todo, and diff summary.",
+      description: "Poll run status（需已绑定）。",
       inputSchema: {
         type: "object",
         properties: { runId: { type: "string" } },
@@ -77,7 +106,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: "interrupt",
-      description: "Abort the active executor session.",
+      description: "Abort active run（需已绑定）。",
       inputSchema: {
         type: "object",
         properties: { runId: { type: "string" } },
@@ -85,7 +114,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: "rework",
-      description: "Interrupt current run and dispatch again with extra instructions.",
+      description: "Interrupt and dispatch again（需已绑定）。",
       inputSchema: {
         type: "object",
         properties: {
@@ -98,7 +127,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: "progress",
-      description: "Ask executor for a short progress update (or read last progress).",
+      description: "Ask executor progress（需已绑定）。",
       inputSchema: {
         type: "object",
         properties: {
@@ -109,7 +138,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: "review_context",
-      description: "Bundle plan, brief, run state, and acceptance commands for Codex final review.",
+      description: "Bundle plan/brief/state for review（需已绑定；plan 须在绑定目录内）。",
       inputSchema: {
         type: "object",
         properties: { runId: { type: "string" } },
@@ -129,6 +158,22 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
   try {
     let result: unknown;
     switch (name) {
+      case "get_workspace":
+        result = await getWorkspaceTool();
+        break;
+      case "set_workspace":
+        result = await setWorkspaceTool(String(args.path || ""));
+        break;
+      case "write_plan":
+        result = await writePlanTool({
+          task: String(args.task || ""),
+          content: String(args.content || ""),
+          overwrite: Boolean(args.overwrite),
+        });
+        break;
+      case "list_plans":
+        result = await listPlansTool();
+        break;
       case "dispatch":
         result = await dispatch({
           planPath: args.planPath as string | undefined,
@@ -138,12 +183,6 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
           extraInstructions: args.extraInstructions as string | undefined,
           workspace: args.workspace as string | undefined,
         });
-        break;
-      case "get_workspace":
-        result = await getWorkspaceTool();
-        break;
-      case "set_workspace":
-        result = await setWorkspaceTool(String(args.path || ""));
         break;
       case "status":
         result = await status(args.runId as string | undefined);
@@ -178,8 +217,21 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
     };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
+    const code =
+      e && typeof e === "object" && "code" in e
+        ? String((e as { code?: string }).code || "")
+        : "";
     return {
-      content: [{ type: "text", text: JSON.stringify({ ok: false, error: msg }, null, 2) }],
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify(
+            { ok: false, error: msg, ...(code ? { code } : {}) },
+            null,
+            2,
+          ),
+        },
+      ],
       isError: true,
     };
   }

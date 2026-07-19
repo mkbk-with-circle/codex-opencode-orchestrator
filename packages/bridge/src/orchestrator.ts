@@ -20,10 +20,17 @@ import {
 } from "./state.js";
 import type { ExecutorAdapter, RunState } from "./types.js";
 import {
+  assertInsideBound,
+  ensureBoundPlansDir,
+  getBoundWorkspace,
   getUserTargetWorkspace,
+  requireBoundWorkspace,
+  resolveBoundPlanPath,
   resolveTargetWorkspace,
+  sanitizePlanTaskName,
   setUserTargetWorkspace,
 } from "./workspace.js";
+import fs from "node:fs";
 
 loadDotEnv();
 
@@ -79,22 +86,39 @@ export async function dispatch(args: {
   confirm?: boolean;
   extraInstructions?: string;
   confirmedToken?: string;
-  /** OpenCode 工作目录：绝对路径，或相对编排仓；覆盖默认 target */
+  /** OpenCode 工作目录：若提供，必须与已绑定目录一致 */
   workspace?: string;
 }): Promise<Record<string, unknown>> {
   const root = repoRoot();
   const orch = loadOrchestratorConfig(root);
   const execs = loadExecutors(root);
-  const planPath = args.planPath || "plans/current.md";
-  const plan = readText(planPath, root);
+  const bound = requireBoundWorkspace(root);
+
+  if (args.workspace?.trim()) {
+    const requested = path.resolve(
+      args.workspace.startsWith("~/")
+        ? path.join(process.env.HOME || "", args.workspace.slice(2))
+        : path.isAbsolute(args.workspace)
+          ? args.workspace
+          : path.resolve(root, args.workspace),
+    );
+    if (requested !== bound.absPath) {
+      throw new Error(
+        `已绑定工作目录为 ${bound.absPath}，拒绝改到 ${requested}。如需更换请先 set_workspace。`,
+      );
+    }
+  }
+
+  const planAbs = resolveBoundPlanPath(bound, args.planPath);
+  const plan = readText(planAbs, root);
   const executorId = resolveExecutorId(args.executorId);
   const def = execs.executors[executorId];
   if (!def) throw new Error(`Unknown executor id: ${executorId}`);
 
+  // Force execution cwd = bound (ignore plan frontmatter / defaults)
   const ws = resolveTargetWorkspace({
-    dispatchWorkspace: args.workspace,
-    planText: plan,
-    orchDefault: orch.default_workspace,
+    dispatchWorkspace: bound.absPath,
+    orchDefault: bound.absPath,
     useWorktree: orch.use_worktree,
     root,
   });
@@ -112,7 +136,7 @@ export async function dispatch(args: {
       status: "awaiting_confirm",
       executorId,
       executorType: def.type,
-      planPath,
+      planPath: planAbs,
       briefPath: path.relative(root, briefPath),
       workspace: ws.label,
       createdAt: new Date().toISOString(),
@@ -127,8 +151,10 @@ export async function dispatch(args: {
       runId: id,
       confirmToken: token,
       briefPath: state.briefPath,
+      planPath: planAbs,
       workspace: ws.absPath,
-      workspaceSource: ws.source,
+      workspaceSource: "user_config",
+      workspaceBound: true,
       workspaceExternal: ws.isExternal,
       briefPreview: brief.slice(0, 1200),
       message:
@@ -143,7 +169,8 @@ export async function dispatch(args: {
       throw new Error("Invalid or missing confirmedToken");
     }
     state = active;
-    if (args.workspace) state.workspace = ws.label;
+    state.workspace = ws.label;
+    state.planPath = planAbs;
   } else {
     const id = newRunId();
     const brief = buildBriefFromPlan(plan, args.extraInstructions, ws.absPath);
@@ -153,7 +180,7 @@ export async function dispatch(args: {
       status: "starting",
       executorId,
       executorType: def.type,
-      planPath,
+      planPath: planAbs,
       briefPath: path.relative(root, briefPath),
       workspace: ws.label,
       createdAt: new Date().toISOString(),
@@ -161,16 +188,7 @@ export async function dispatch(args: {
     };
   }
 
-  // Re-resolve in case confirm path used older state without abs
-  const wsFinal = resolveTargetWorkspace({
-    dispatchWorkspace: args.workspace || (path.isAbsolute(state.workspace) ? state.workspace : undefined),
-    planText: plan,
-    orchDefault: state.workspace || orch.default_workspace,
-    useWorktree: orch.use_worktree,
-    root,
-  });
-
-  let workspaceAbs = wsFinal.absPath;
+  let workspaceAbs = bound.absPath;
   const briefFull = buildBriefFromPlan(
     plan,
     args.extraInstructions,
@@ -178,13 +196,13 @@ export async function dispatch(args: {
   );
   writeBrief(state.id, briefFull, root);
   state.briefPath = path.relative(root, path.join(root, "briefs", `${state.id}.md`));
-  state.workspace = wsFinal.label;
+  state.workspace = ws.label;
 
-  if (wsFinal.useWorktree) {
+  if (ws.useWorktree) {
     workspaceAbs = ensureWorktree(
       root,
       state.id,
-      path.isAbsolute(wsFinal.label) ? orch.default_workspace : wsFinal.label,
+      path.isAbsolute(ws.label) ? orch.default_workspace : ws.label,
     );
     state.worktreePath = path.join("runs", state.id, "worktree");
   }
@@ -221,9 +239,11 @@ export async function dispatch(args: {
       sessionId: state.sessionId,
       summary: state.summary,
       worktreePath: state.worktreePath,
+      planPath: planAbs,
       workspace: workspaceAbs,
-      workspaceSource: wsFinal.source,
-      workspaceExternal: wsFinal.isExternal,
+      workspaceSource: bound.source,
+      workspaceBound: true,
+      workspaceExternal: ws.isExternal,
     };
   } catch (e) {
     state.status = "failed";
@@ -231,6 +251,68 @@ export async function dispatch(args: {
     writeState(state, root);
     throw e;
   }
+}
+
+function injectWorkspaceFrontmatter(markdown: string, workspaceAbs: string, task: string): string {
+  const body = markdown.replace(/^---[\s\S]*?\n---\s*/, "").trimStart();
+  return [
+    "---",
+    `workspace: ${workspaceAbs}`,
+    `task: ${task.replace(/\.md$/i, "")}`,
+    "---",
+    "",
+    body,
+    "",
+  ].join("\n");
+}
+
+/** Programmatic plan write → bound workspace `.orchestrator/plans/` */
+export async function writePlanTool(args: {
+  task: string;
+  content: string;
+  overwrite?: boolean;
+}): Promise<Record<string, unknown>> {
+  const bound = requireBoundWorkspace();
+  const fileName = sanitizePlanTaskName(args.task);
+  const dir = ensureBoundPlansDir(bound);
+  const abs = path.join(dir, fileName);
+  if (fs.existsSync(abs) && !args.overwrite) {
+    throw new Error(`Plan 已存在: ${abs}（传 overwrite:true 可覆盖）`);
+  }
+  const taskSlug = fileName.replace(/\.md$/i, "");
+  const content = injectWorkspaceFrontmatter(
+    String(args.content || ""),
+    bound.absPath,
+    taskSlug,
+  );
+  fs.writeFileSync(abs, content, "utf8");
+  return {
+    ok: true,
+    planPath: abs,
+    workspace: bound.absPath,
+    task: taskSlug,
+    plansDir: bound.plansDir,
+    message: "Plan 已写入绑定业务仓；派工请用 dispatch，planPath 可用任务名或该绝对路径。",
+  };
+}
+
+export async function listPlansTool(): Promise<Record<string, unknown>> {
+  const bound = requireBoundWorkspace();
+  ensureBoundPlansDir(bound);
+  const files = fs
+    .readdirSync(bound.plansDir)
+    .filter((f) => f.endsWith(".md"))
+    .sort()
+    .map((f) => ({
+      name: f,
+      path: path.join(bound.plansDir, f),
+    }));
+  return {
+    ok: true,
+    workspace: bound.absPath,
+    plansDir: bound.plansDir,
+    plans: files,
+  };
 }
 
 export async function setWorkspaceTool(workspacePath: string) {
@@ -241,6 +323,7 @@ export async function getWorkspaceTool() {
   const root = repoRoot();
   const orch = loadOrchestratorConfig(root);
   const user = getUserTargetWorkspace();
+  const bound = getBoundWorkspace(root);
   try {
     const resolved = resolveTargetWorkspace({
       orchDefault: orch.default_workspace,
@@ -249,18 +332,31 @@ export async function getWorkspaceTool() {
     });
     return {
       ok: true,
+      bound: Boolean(bound),
       orchestratorRoot: root,
-      targetWorkspace: resolved.absPath,
-      source: resolved.source,
-      external: resolved.isExternal,
-      useWorktree: resolved.useWorktree,
+      targetWorkspace: bound?.absPath ?? resolved.absPath,
+      plansDir: bound?.plansDir ?? null,
+      source: bound?.source ?? resolved.source,
+      external: bound
+        ? path.resolve(bound.absPath) !== path.resolve(root) &&
+          !bound.absPath.startsWith(root + path.sep)
+        : resolved.isExternal,
+      useWorktree: bound
+        ? path.resolve(bound.absPath) !== path.resolve(root) &&
+          !bound.absPath.startsWith(root + path.sep)
+          ? false
+          : orch.use_worktree
+        : resolved.useWorktree,
       userConfigPath: user.configPath,
       envOverride: user.env,
-      hint: "Codex 打开编排仓用 Skills；OpenCode 在 targetWorkspace 里改代码/build",
+      hint: bound
+        ? "已绑定：plan 写入 plansDir；dispatch/supervise/review 强制在此目录。"
+        : "未绑定：请先 set_workspace。未绑定前 write_plan/dispatch/status/review 会被程序拒绝。",
     };
   } catch (e) {
     return {
       ok: false,
+      bound: Boolean(bound),
       orchestratorRoot: root,
       error: e instanceof Error ? e.message : String(e),
       userConfigPath: user.configPath,
@@ -269,6 +365,7 @@ export async function getWorkspaceTool() {
 }
 
 export async function status(runId?: string): Promise<Record<string, unknown>> {
+  requireBoundWorkspace();
   const root = repoRoot();
   const execs = loadExecutors(root);
   const state = runId ? readState(runId, root) : findActiveRun(root) || latestRun(root);
@@ -289,10 +386,12 @@ export async function status(runId?: string): Promise<Record<string, unknown>> {
     ok: true,
     run: state,
     poll,
+    workspace: requireBoundWorkspace().absPath,
   };
 }
 
 export async function interrupt(runId?: string): Promise<Record<string, unknown>> {
+  requireBoundWorkspace();
   const root = repoRoot();
   const execs = loadExecutors(root);
   const state = runId ? readState(runId, root) : findActiveRun(root);
@@ -311,6 +410,7 @@ export async function rework(args: {
   extraInstructions: string;
   confirm?: boolean;
 }): Promise<Record<string, unknown>> {
+  requireBoundWorkspace();
   await interrupt(args.runId);
   return dispatch({
     extraInstructions: args.extraInstructions,
@@ -323,6 +423,7 @@ export async function progress(args?: {
   runId?: string;
   prompt?: string;
 }): Promise<Record<string, unknown>> {
+  requireBoundWorkspace();
   const root = repoRoot();
   const execs = loadExecutors(root);
   const state = args?.runId
@@ -342,12 +443,16 @@ export async function progress(args?: {
 }
 
 export async function reviewContext(runId?: string): Promise<Record<string, unknown>> {
+  const bound = requireBoundWorkspace();
   const root = repoRoot();
   const orch = loadOrchestratorConfig(root);
   const state = runId ? readState(runId, root) : latestRun(root);
   if (!state) return { ok: false, message: "No runs found" };
   const plan = readText(state.planPath, root);
   const brief = readText(state.briefPath, root);
+  if (path.isAbsolute(state.planPath)) {
+    assertInsideBound(state.planPath, bound, "planPath");
+  }
   const st = await status(state.id);
   return {
     ok: true,
@@ -355,6 +460,7 @@ export async function reviewContext(runId?: string): Promise<Record<string, unkn
     plan,
     brief,
     status: st,
+    workspace: bound.absPath,
     acceptanceCommands: orch.acceptance?.commands || [],
     gates: orch.gates,
   };

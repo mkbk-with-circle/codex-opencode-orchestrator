@@ -1,11 +1,5 @@
 #!/usr/bin/env bash
 # 编排器便捷入口（把本仓 bin/ 加到 PATH 后，任意目录可用）。
-#   orch              → 在当前目录启动 Codex，并 set-workspace=$PWD
-#   orch exec '…'     → 非交互
-#   orch watch […]   → 定时轮询
-#   orch doctor
-#   orch install
-#   orch workspace [path]
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -20,9 +14,32 @@ case "$CMD" in
     shift
     exec bash "$ROOT/scripts/codex-in-workspace.sh" exec "$@"
     ;;
-  watch)
+  resume)
     shift
-    exec bash "$ROOT/scripts/watch-run.sh" "$@"
+    exec bash "$ROOT/scripts/sessions.sh" resume "$@"
+    ;;
+  sessions)
+    shift
+    exec bash "$ROOT/scripts/sessions.sh" list "$@"
+    ;;
+  session)
+    shift
+    sub="${1:-}"
+    case "$sub" in
+      pin) shift; exec bash "$ROOT/scripts/sessions.sh" pin "$@" ;;
+      last|id) exec bash "$ROOT/scripts/sessions.sh" last ;;
+      list|ls|"") exec bash "$ROOT/scripts/sessions.sh" list ;;
+      *) exec bash "$ROOT/scripts/sessions.sh" "$@" ;;
+    esac
+    ;;
+  watch)
+    echo "已改为: orch poll start | orch poll stop（见 docs/POLL.md）" >&2
+    shift
+    exec bash "$ROOT/scripts/poll.sh" "$@"
+    ;;
+  poll)
+    shift
+    exec bash "$ROOT/scripts/poll.sh" "$@"
     ;;
   doctor)
     exec bash "$ROOT/scripts/doctor.sh"
@@ -46,16 +63,14 @@ case "$CMD" in
     cat <<EOF
 orch — Codex ↔ OpenCode Orchestrator
 
-  orch                 当前目录启动 Codex CLI（并绑定 TARGET_WORKSPACE）
-  orch exec 'prompt'   非交互执行
-  orch watch [flags]   定时轮询 run（见 scripts/watch-run.sh）
-  orch doctor          健康检查
-  orch install [--smoke]
-  orch workspace [path]
-  orch smoke           mock 冒烟
+  orch                      本业务仓开新会话（并绑定 workspace）
+  orch resume [id|名|#]     恢复本仓会话
+  orch sessions             列出本仓会话
+  orch session pin <名>     给最近会话起别名
+  orch poll start|stop      plan 变更轮询
+  orch doctor / install / workspace / smoke / exec
 
-安装: bash $ROOT/scripts/install.sh
-文档: $ROOT/docs/CLI.md
+文档: $ROOT/docs/USAGE.md
 EOF
     ;;
   *)

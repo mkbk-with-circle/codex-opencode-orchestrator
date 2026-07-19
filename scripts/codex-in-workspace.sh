@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # 在「当前业务目录」用 Codex CLI，并挂上编排仓环境变量。
-# 用法:
-#   cd ~/Projects/MyApp
-#   bash /path/to/codex-opencode-orchestrator/scripts/codex-in-workspace.sh
-#   bash .../codex-in-workspace.sh exec '列出当前目录文件，不要改任何东西'
+#
+#   orch / bash scripts/codex-in-workspace.sh          # 新会话
+#   orch resume | bash …/codex-in-workspace.sh resume  # 恢复本仓会话
+#   orch sessions                                      # 列出本仓会话
+#   bash …/codex-in-workspace.sh exec '…'              # 非交互
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -32,12 +33,39 @@ if [[ -x "$ORCHESTRATOR_ROOT/scripts/set-workspace.sh" ]]; then
 fi
 
 MODE="${1:-}"
-if [[ "$MODE" == "exec" ]]; then
-  shift
-  PROMPT="${*:-Reply with PONG only.}"
-  exec "$CODEX_BIN" exec --skip-git-repo-check \
-    -C "$TARGET_WORKSPACE" \
-    "$PROMPT" </dev/null
-fi
 
-exec "$CODEX_BIN" -C "$TARGET_WORKSPACE" "$@"
+case "$MODE" in
+  exec)
+    shift
+    PROMPT="${*:-Reply with PONG only.}"
+    exec "$CODEX_BIN" exec --skip-git-repo-check \
+      -C "$TARGET_WORKSPACE" \
+      "$PROMPT" </dev/null
+    ;;
+  resume|sessions|session)
+    exec bash "$ORCHESTRATOR_ROOT/scripts/sessions.sh" "$@"
+    ;;
+  -h|--help)
+    cat <<EOF
+用法:
+  $(basename "$0")                 在本业务仓开新 Codex 会话
+  $(basename "$0") resume          恢复本仓最近会话
+  $(basename "$0") resume <id|名|#>
+  $(basename "$0") sessions        列出本仓会话
+  $(basename "$0") exec 'prompt'   非交互
+
+等价: orch / orch resume / orch sessions
+EOF
+    exit 0
+    ;;
+esac
+
+echo "提示: 下次恢复本仓会话 → orch resume   | 列表 → orch sessions"
+echo "      给当前会话起名   → 退出后 orch session pin <别名>"
+echo
+
+# Interactive: after exit, capture last session id for this workspace
+"$CODEX_BIN" -C "$TARGET_WORKSPACE" "$@" || status=$?
+status=${status:-0}
+bash "$ORCHESTRATOR_ROOT/scripts/sessions.sh" capture >/dev/null 2>&1 || true
+exit "$status"

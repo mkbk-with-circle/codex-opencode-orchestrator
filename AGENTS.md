@@ -1,31 +1,21 @@
 # Codex ↔ OpenCode 编排器
 
-你是大脑。OpenCode 是手脚，工作在**业务仓（Target Workspace）**。
+你是大脑；OpenCode 在**已绑定业务仓**改代码。
 
-安装后 Skills 在 `~/.agents/skills`，MCP `opencode_bridge` 在用户配置 —— **不必**只在打开编排仓时才能用。
+## 硬规则
 
-## 双目录
+1. 未绑定则拒绝写 plan / 派工 / 查状态 / 验收（先 `set_workspace`）。  
+2. Plan 只写 `{业务仓}/.orchestrator/plans/`。  
+3. CLI 里用 **`$opencode-*`**；`/plan` 是 Codex 内置模式，不要当编排 plan 用。
 
-1. **编排仓**（本仓库）→ plans / runs / bridge  
-2. **业务仓** → OpenCode 改代码 / build  
-   - `set_workspace` / `bash scripts/set-workspace.sh ~/Projects/MyApp` / `orch workspace …`  
-   - 或 `/dispatch` 时带 `workspace=/绝对路径`
+## Skills
 
-## Slash
-
-| Slash | 作用 |
+| Skill | 作用 |
 |-------|------|
-| `/dispatch` | 派工（先确认 workspace） |
-| `/status` `/progress` `/interrupt` `/rework` | 监督 |
-| `/review` | 终验 |
+| `$opencode-plan` | 写 plan |
+| `$opencode-dispatch` | 派工 |
+| `$opencode-supervise` | 查进度 |
+| `$opencode-poll` / `$opencode-poll-cancel` | 开始 / 取消轮询 |
+| `$opencode-review` | 验收 |
 
-定时盯 run：用户可挂 `orch watch`（见 `docs/WATCH.md`），不是你自己 sleep 循环。
-
-派工前可说：先 `get_workspace` 给我看 OpenCode 会去哪。
-
-## 硬性规则
-
-- 优先 MCP；不提交密钥。  
-- 破坏性操作需确认。  
-- 不轻信执行器自评。  
-- **每次 dispatch 必须让用户知道 `workspace` 绝对路径。**
+用户文档：`docs/USAGE.md`。

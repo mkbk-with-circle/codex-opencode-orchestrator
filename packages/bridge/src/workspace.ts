@@ -180,3 +180,135 @@ export function getUserTargetWorkspace(): {
     env,
   };
 }
+
+/** Explicit bind only: env or user workspace.env — never orchestrator playground default. */
+export type BoundWorkspace = {
+  absPath: string;
+  source: "env" | "user_config";
+  configPath: string;
+  plansDir: string;
+};
+
+export const BIND_REQUIRED_CODE = "workspace_not_bound";
+
+export function bindRequiredError(): Error {
+  const err = new Error(
+    `未绑定业务工作目录（${BIND_REQUIRED_CODE}）。请先调用 MCP set_workspace，或运行: bash scripts/set-workspace.sh /绝对路径/到业务项目。绑定后 plan/dispatch/supervise/review 才会放行，且一律只在该目录工作。`,
+  );
+  (err as Error & { code?: string }).code = BIND_REQUIRED_CODE;
+  return err;
+}
+
+/**
+ * Bound workspace = TARGET_WORKSPACE env or ~/.config/.../workspace.env.
+ * Does NOT fall back to orchestrator default (playground).
+ */
+export function getBoundWorkspace(root = repoRoot()): BoundWorkspace | null {
+  const user = getUserTargetWorkspace();
+  let raw: string | null = null;
+  let source: BoundWorkspace["source"] = "user_config";
+
+  if (user.env?.trim()) {
+    raw = user.env.trim();
+    source = "env";
+  } else {
+    const file = readKeyValueFile(userWorkspaceConfigPath());
+    const fromFile =
+      file.TARGET_WORKSPACE ||
+      file.ORCHESTRATOR_TARGET_WORKSPACE ||
+      file.workspace ||
+      null;
+    if (fromFile?.trim()) {
+      raw = fromFile.trim();
+      source = "user_config";
+    }
+  }
+
+  if (!raw) return null;
+
+  raw = expandHome(raw);
+  const absPath = path.isAbsolute(raw) ? path.resolve(raw) : path.resolve(root, raw);
+  if (!fs.existsSync(absPath) || !fs.statSync(absPath).isDirectory()) {
+    throw new Error(
+      `已配置的绑定目录无效或不存在: ${absPath}。请重新 set_workspace。`,
+    );
+  }
+
+  return {
+    absPath,
+    source,
+    configPath: userWorkspaceConfigPath(),
+    plansDir: path.join(absPath, ".orchestrator", "plans"),
+  };
+}
+
+export function requireBoundWorkspace(root = repoRoot()): BoundWorkspace {
+  const bound = getBoundWorkspace(root);
+  if (!bound) throw bindRequiredError();
+  return bound;
+}
+
+/** Plans live under the bound business workspace. */
+export function ensureBoundPlansDir(bound: BoundWorkspace): string {
+  fs.mkdirSync(bound.plansDir, { recursive: true });
+  return bound.plansDir;
+}
+
+export function assertInsideBound(
+  fileAbs: string,
+  bound: BoundWorkspace,
+  label = "path",
+): void {
+  const file = path.resolve(fileAbs);
+  const root = bound.absPath.endsWith(path.sep)
+    ? bound.absPath
+    : bound.absPath + path.sep;
+  if (file !== bound.absPath && !file.startsWith(root)) {
+    throw new Error(
+      `${label} 必须位于已绑定工作目录内: ${bound.absPath}（收到: ${file}）`,
+    );
+  }
+}
+
+/**
+ * Resolve a plan path relative to bound `.orchestrator/plans/`, or absolute under bound.
+ */
+export function resolveBoundPlanPath(
+  bound: BoundWorkspace,
+  planPath?: string,
+): string {
+  const name = (planPath || "current.md").trim();
+  if (path.isAbsolute(name)) {
+    assertInsideBound(name, bound, "planPath");
+    if (!fs.existsSync(name)) throw new Error(`Plan 不存在: ${name}`);
+    return name;
+  }
+  const base = path.basename(name);
+  const candidates = [
+    path.join(bound.plansDir, name),
+    path.join(bound.plansDir, base),
+    path.join(bound.absPath, "plans", name),
+    path.join(bound.absPath, name),
+  ];
+  for (const c of candidates) {
+    if (fs.existsSync(c)) {
+      assertInsideBound(c, bound, "planPath");
+      return c;
+    }
+  }
+  throw new Error(
+    `在绑定目录未找到 plan: ${name}。请先 $opencode-plan / write_plan 写入 ${bound.plansDir}/`,
+  );
+}
+
+/** Sanitize task slug for plan filenames */
+export function sanitizePlanTaskName(task: string): string {
+  const s = task
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9\u4e00-\u9fff._-]+/gi, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80);
+  if (!s) throw new Error("task 名称无效");
+  return s.endsWith(".md") ? s : `${s}.md`;
+}

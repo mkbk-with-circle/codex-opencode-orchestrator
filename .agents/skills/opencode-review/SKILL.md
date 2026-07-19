@@ -1,17 +1,16 @@
 ---
 name: opencode-review
 description: >
-  Final verification that an executor run satisfies plans/current.md. Use for /review
-  or when the user asks whether the OpenCode work is done correctly.
+  Final verification via review_context. Requires bound workspace (enforced).
+  Use for $opencode-review.
 ---
 
 # OpenCode Review
 
-1. Call MCP `review_context` to load plan, brief, run state, and acceptance commands.
-2. Inspect the actual workspace / worktree diff yourself (read files; do not trust executor self-report).
-3. Run acceptance commands from the context (shell), plus any extra checks the plan lists.
-4. Gate reminders: destructive shell and mass deletes needed user confirmation — flag if executor violated scope.
-5. Output a clear verdict:
+1. `get_workspace`：未绑定则先 `set_workspace`。  
+2. MCP `review_context` 加载 plan / brief / run。  
+3. 在**绑定业务仓**里读文件、跑验收命令；不信任执行器自评。  
+4. 输出：
 
 ```
 VERDICT: PASS | FAIL
@@ -20,5 +19,3 @@ Evidence:
 Gaps / next:
 - ...
 ```
-
-Only say PASS if the original plan acceptance criteria are met.

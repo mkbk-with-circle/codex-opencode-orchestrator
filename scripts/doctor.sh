@@ -48,23 +48,12 @@ else
   CODEX_BIN=""
 fi
 
-# MCP（以 ~/.codex/config.toml 为准；`mcp get` 会把绝对路径显示成相对名）
+# MCP：用户级绝对路径才算「install 完成」；仅有项目内相对路径 ≠ 任意目录可用
 CODEX_CFG="${CODEX_HOME:-$HOME/.codex}/config.toml"
-if [[ -f "$CODEX_CFG" ]] && grep -q '\[mcp_servers\.opencode_bridge\]' "$CODEX_CFG"; then
-  if grep -F "$ROOT/scripts/mcp-bridge.sh" "$CODEX_CFG" >/dev/null; then
-    ok "MCP opencode_bridge → $ROOT/scripts/mcp-bridge.sh"
-  elif grep -q 'mcp-bridge\.sh' "$CODEX_CFG"; then
-    warn "MCP opencode_bridge 已注册，但 args 不是本仓绝对路径 → 重跑 scripts/install.sh"
-  else
-    warn "MCP 段存在但未找到 mcp-bridge.sh 路径"
-  fi
-elif [[ -n "${CODEX_BIN}" ]]; then
-  MCP_OUT="$("$CODEX_BIN" mcp get opencode_bridge 2>&1 || true)"
-  if echo "$MCP_OUT" | grep -qi 'opencode_bridge\|mcp-bridge\|enabled'; then
-    ok "MCP opencode_bridge 已注册（请确认 args 为绝对路径）"
-  else
-    bad "未注册 MCP opencode_bridge → bash scripts/install.sh"
-  fi
+if [[ -f "$CODEX_CFG" ]] && grep -F "$ROOT/scripts/mcp-bridge.sh" "$CODEX_CFG" >/dev/null; then
+  ok "MCP opencode_bridge → $ROOT/scripts/mcp-bridge.sh（用户配置）"
+elif [[ -f "$ROOT/.codex/config.toml" ]] && grep -q 'mcp-bridge\.sh' "$ROOT/.codex/config.toml"; then
+  warn "仅有项目内 MCP（相对路径）。任意业务仓使用请跑: bash scripts/install.sh"
 else
   bad "未注册 MCP opencode_bridge → bash scripts/install.sh"
 fi

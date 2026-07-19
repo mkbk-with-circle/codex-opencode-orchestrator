@@ -24,3 +24,6 @@ packages/bridge/*.tsbuildinfo
 
 # OpenCode local cache (if any)
 .opencode/cache/
+
+# Per-workspace orchestrator plans (live under business repos; also under playground when smoking)
+**/.orchestrator/

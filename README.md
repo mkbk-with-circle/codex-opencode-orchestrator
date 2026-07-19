@@ -1,44 +1,48 @@
 # Codex ↔ OpenCode Orchestrator
 
-**Codex（大脑）** 规划 / 监督 · **OpenCode（手脚）** 在业务仓改代码。
+**Codex** 负责规划与监督，**OpenCode** 在业务项目里改代码。
 
-## Clone 后 3 步
+## 5 分钟上手
 
 ```bash
-git clone <this-repo> && cd codex-opencode-orchestrator
-bash scripts/install.sh --smoke          # 构建 + 配置本机 Codex CLI（MCP/Skills）
-bash scripts/set-workspace.sh ~/Projects/YourApp
-cd ~/Projects/YourApp && bash /path/to/codex-opencode-orchestrator/scripts/codex-in-workspace.sh
+git clone https://github.com/mkbk-with-circle/codex-opencode-orchestrator.git
+cd codex-opencode-orchestrator
+bash scripts/install.sh --smoke          # 一次：装 bridge + 注册 MCP/Skills
+bash scripts/set-workspace.sh ~/你的项目  # 绑定业务仓（必做）
+
+# 可选：方便以后敲 orch
+echo 'export PATH="'"$PWD"'/bin:$PATH"' >> ~/.zshrc && source ~/.zshrc
+
+cd ~/你的项目
+orch                    # 或: bash …/scripts/codex-in-workspace.sh
 ```
 
-把 `bin/` 加进 PATH 后可简写为 `orch` / `orch doctor` / `orch watch`。
+在 Codex 里用 **`$` Skills**（不要用内置 `/plan`）：
 
-| 文档 | 内容 |
-|------|------|
-| [docs/CLI.md](docs/CLI.md) | Codex CLI 工作流（推荐） |
-| [docs/WATCH.md](docs/WATCH.md) | 定时轮询监督 |
-| [docs/WORKSPACE.md](docs/WORKSPACE.md) | 业务仓怎么指定 |
-| [`AGENTS.md`](AGENTS.md) | 斜杠命令与规则 |
+| 你要做的 | 输入 |
+|----------|------|
+| 写计划 | `$opencode-plan` |
+| 派工 | `$opencode-dispatch` |
+| 看进度 | `$opencode-supervise` |
+| 验收 | `$opencode-review` |
+| 开始 / 取消轮询 | `$opencode-poll` / `$opencode-poll-cancel` |
 
-## 日常 workflow
+完整说明 → **[docs/USAGE.md](docs/USAGE.md)**  
+给模型看的规则 → [`AGENTS.md`](AGENTS.md)
 
-1. 在 Codex 里把 plan 落到 `plans/`（编排仓）
-2. `/dispatch` → MCP bridge 启动 run（OpenCode 在 **TARGET_WORKSPACE**）
-3. `/status` 或挂着 `orch watch --interval 30`
-4. `/review` 对照 plan 验收
+## 常用命令
 
-## 执行器
+```bash
+orch                  # 本业务仓开新会话
+orch resume           # 恢复本仓最近会话
+orch sessions         # 列出本仓会话
+orch poll start       # plan 变更才唤醒会话
+orch poll stop
+orch doctor           # 健康检查
+orch workspace        # 看当前绑定
+```
 
-- 默认演示：`config/orchestrator.yaml` → `default_executor: mock`
-- 真跑 OpenCode：改为 `siliconflow-opencode`，并配置 `.env` 里的 `SILICONFLOW_API_KEY`（`cp .env.example .env`）
+## 默认与安全
 
-可选：`bash scripts/setup-opencode.sh`
-
-## 安全
-
-- 不要提交 `.env`
-- 破坏性 shell / 批量删除需确认门禁
-
-## 布局
-
-`.agents/skills/` · `packages/bridge/` · `plans/` `briefs/` `runs/` · `scripts/install.sh`
+- 默认执行器是 **mock**（不用 API Key 也能冒烟）。真跑 OpenCode：改 `config/orchestrator.yaml`，并在 `.env` 填密钥。
+- 不要提交 `.env`。

@@ -150,13 +150,14 @@ echo "  bash $ROOT/scripts/codex-in-workspace.sh"
 echo
 echo "  # 3) 对话里用 /dispatch /status /review（Skills 已链到 ~/.agents/skills）"
 echo
-echo "  # 定时轮询 run："
-echo "  bash $ROOT/scripts/watch-run.sh --interval 30"
+echo "  # 定时轮询（只要两个）:"
+echo "  bash $ROOT/bin/orch poll start --interval 60"
+echo "  bash $ROOT/bin/orch poll stop"
 echo
 echo "  健康检查: bash $ROOT/scripts/doctor.sh"
-echo "  说明:     $ROOT/docs/CLI.md"
+echo "  说明:     $ROOT/docs/USAGE.md"
 echo "────────────────────────────────────────"
 echo "可选: 把下面加到 ~/.zshrc"
 echo "  export PATH=\"$ROOT/bin:\$PATH\""
-echo "  # 然后任意目录: orch   /  orch exec '…'  /  orch watch"
+echo "  # 然后任意目录: orch   /  orch resume   /  orch poll start|stop"
 echo "────────────────────────────────────────"

@@ -6,13 +6,16 @@ import {
   dispatch,
   getWorkspaceTool,
   interrupt,
+  listPlansTool,
   progress,
   reviewContext,
   rework,
   setWorkspaceTool,
   status,
+  writePlanTool,
 } from "./orchestrator.js";
 import { loadDotEnv } from "./config.js";
+import fs from "node:fs";
 
 loadDotEnv();
 
@@ -50,6 +53,33 @@ async function main() {
       console.log(JSON.stringify(await setWorkspaceTool(p), null, 2));
       break;
     }
+    case "write-plan": {
+      const task = flag("--task");
+      const file = flag("--file");
+      const contentFlag = flag("--content");
+      if (!task) {
+        console.error("用法: write-plan --task name [--file path.md | --content '...'] [--overwrite]");
+        process.exit(1);
+      }
+      const content = file
+        ? fs.readFileSync(file, "utf8")
+        : contentFlag || "";
+      console.log(
+        JSON.stringify(
+          await writePlanTool({
+            task,
+            content,
+            overwrite: has("--overwrite"),
+          }),
+          null,
+          2,
+        ),
+      );
+      break;
+    }
+    case "list-plans":
+      console.log(JSON.stringify(await listPlansTool(), null, 2));
+      break;
     case "status":
       console.log(JSON.stringify(await status(flag("--run")), null, 2));
       break;
@@ -81,7 +111,7 @@ async function main() {
       break;
     default:
       console.error(
-        "用法: cli.ts <dispatch|workspace|set-workspace|status|interrupt|rework|progress|review>",
+        "用法: cli.ts <dispatch|workspace|set-workspace|write-plan|list-plans|status|interrupt|rework|progress|review>",
       );
       process.exit(1);
   }

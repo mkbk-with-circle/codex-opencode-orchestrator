@@ -26,6 +26,10 @@ ASK_ON_CHANGE=0
 STALL_SECS=0
 MAX_ITERS=0
 QUIET=0
+# fresh = 独立 exec（默认，不碰你正在聊的会话）
+# resume = 往指定/最近会话追加一轮（会改写该会话记录，可能干扰正打开的 TUI）
+ASK_MODE="${ORCH_WATCH_ASK_MODE:-fresh}"
+SESSION_ID=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -37,8 +41,20 @@ while [[ $# -gt 0 ]]; do
     --ask-on-stall) STALL_SECS="${2:-120}"; shift 2 ;;
     --max) MAX_ITERS="${2:-0}"; shift 2 ;;
     --quiet) QUIET=1; shift ;;
+    --ask-fresh) ASK_MODE=fresh; shift ;;
+    --ask-resume) ASK_MODE=resume; shift ;;
+    --session) SESSION_ID="${2:-}"; shift 2 ;;
     -h|--help)
-      sed -n '2,16p' "$0"
+      cat <<'EOF'
+定时轮询 run；可选「询问」大脑。
+
+询问默认: --ask-fresh（独立会话 + ephemeral，不写入你正在聊的记录）
+  --ask-fresh      独立询问（默认；尽量 --ephemeral，不持久化）
+  --ask-resume     续最近/指定会话（会在该会话里追加轮次，可能干扰当前 TUI）
+  --session <id>   仅 --ask-resume 时指定会话
+
+其它: --interval --run --until-done --once --ask-on-change --ask-on-stall N --max N --quiet
+EOF
       exit 0
       ;;
     *)
@@ -70,27 +86,51 @@ ask_codex() {
     return 0
   fi
   local prompt
-  prompt="$(cat <<EOF
+  if [[ "$ASK_MODE" == "resume" ]]; then
+    prompt="$(cat <<EOF
 你是编排器大脑。定时监督唤醒（原因: ${reason}）。
-请用 MCP 工具 opencode_bridge 的 status / progress（如有）查看当前 run，用一两句话汇报：
-- run 状态
-- 是否卡住 / 是否该 interrupt 或 rework
-- 下一步建议
-不要改业务代码。当前 status JSON:
+这是续写会话（resume），请结合已有上下文。
+请用 MCP opencode_bridge 的 status / progress 查看当前 run，用一两句话汇报状态与建议。不要改业务代码。
+status JSON:
 \`\`\`json
 ${status_json}
 \`\`\`
 EOF
 )"
+  else
+    prompt="$(cat <<EOF
+你是编排器大脑。定时监督唤醒（原因: ${reason}）。
+这是独立只读询问（不写入用户正在进行的交互会话）。
+请用 MCP opencode_bridge 的 status / progress 查看当前 run，用一两句话汇报状态与建议。不要改业务代码。
+status JSON:
+\`\`\`json
+${status_json}
+\`\`\`
+EOF
+)"
+  fi
   echo
-  echo "[ask] codex exec · $reason"
-  # -C 编排仓以便读 AGENTS；业务仓靠 TARGET_WORKSPACE / workspace.env
-  "$CODEX_BIN" exec --skip-git-repo-check -C "$ROOT" -s read-only \
-    "$prompt" </dev/null || echo "[ask] codex exec 退出非零（继续轮询）" >&2
+  echo "[ask] codex · mode=${ASK_MODE} · $reason"
+  if [[ "$ASK_MODE" == "resume" ]]; then
+    echo "[ask] 警告: resume 会往目标会话追加轮次；若该会话正在 TUI 打开，可能交错/干扰。" >&2
+    if [[ -n "$SESSION_ID" ]]; then
+      "$CODEX_BIN" exec resume --skip-git-repo-check \
+        "$SESSION_ID" "$prompt" </dev/null \
+        || echo "[ask] resume 失败（继续轮询）" >&2
+    else
+      "$CODEX_BIN" exec resume --last --skip-git-repo-check \
+        "$prompt" </dev/null \
+        || echo "[ask] resume --last 失败（继续轮询）" >&2
+    fi
+  else
+    # 独立询问：不续写你的交互会话；ephemeral 尽量不落盘新会话文件
+    "$CODEX_BIN" exec --ephemeral --skip-git-repo-check -C "$ROOT" -s read-only \
+      "$prompt" </dev/null || echo "[ask] codex exec 退出非零（继续轮询）" >&2
+  fi
 }
-
-echo "watch-run · interval=${INTERVAL}s  root=$ROOT"
+echo "watch-run · interval=${INTERVAL}s  root=$ROOT  ask_mode=${ASK_MODE}"
 [[ -n "$RUN_ID" ]] && echo "run: $RUN_ID" || echo "run: (latest)"
+[[ -n "$SESSION_ID" ]] && echo "session: $SESSION_ID"
 [[ "$ASK_ON_CHANGE" -eq 1 ]] && echo "ask-on-change: on"
 [[ "$STALL_SECS" -gt 0 ]] && echo "ask-on-stall: ${STALL_SECS}s"
 echo
