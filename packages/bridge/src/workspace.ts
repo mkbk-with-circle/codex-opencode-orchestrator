@@ -187,6 +187,8 @@ export type BoundWorkspace = {
   source: "env" | "user_config";
   configPath: string;
   plansDir: string;
+  briefsDir: string;
+  runsDir: string;
 };
 
 export const BIND_REQUIRED_CODE = "workspace_not_bound";
@@ -239,6 +241,8 @@ export function getBoundWorkspace(root = repoRoot()): BoundWorkspace | null {
     source,
     configPath: userWorkspaceConfigPath(),
     plansDir: path.join(absPath, ".orchestrator", "plans"),
+    briefsDir: path.join(absPath, ".orchestrator", "briefs"),
+    runsDir: path.join(absPath, ".orchestrator", "runs"),
   };
 }
 
@@ -284,9 +288,12 @@ export function resolveBoundPlanPath(
     return name;
   }
   const base = path.basename(name);
+  const withMd = base.endsWith(".md") ? base : `${base}.md`;
   const candidates = [
+    path.join(bound.plansDir, withMd),
     path.join(bound.plansDir, name),
     path.join(bound.plansDir, base),
+    path.join(bound.absPath, "plans", withMd),
     path.join(bound.absPath, "plans", name),
     path.join(bound.absPath, name),
   ];

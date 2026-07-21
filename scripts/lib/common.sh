@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Shared helpers for installer / doctor / watch.
+# Shared helpers for installer / doctor / poll.
 # shellcheck disable=SC2034
 
 orch_root() {

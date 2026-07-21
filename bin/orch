@@ -32,11 +32,6 @@ case "$CMD" in
       *) exec bash "$ROOT/scripts/sessions.sh" "$@" ;;
     esac
     ;;
-  watch)
-    echo "已改为: orch poll start | orch poll stop（见 docs/POLL.md）" >&2
-    shift
-    exec bash "$ROOT/scripts/poll.sh" "$@"
-    ;;
   poll)
     shift
     exec bash "$ROOT/scripts/poll.sh" "$@"
@@ -56,6 +51,28 @@ case "$CMD" in
     cd "$ROOT/packages/bridge"
     exec npx tsx src/cli.ts workspace
     ;;
+  wait-reply|provide-reply|begin-hold)
+    shift
+    cd "$ROOT/packages/bridge"
+    case "$CMD" in
+      wait-reply) exec npx tsx src/cli.ts wait-reply "$@" ;;
+      provide-reply) exec npx tsx src/cli.ts provide-reply "$@" ;;
+      begin-hold) exec npx tsx src/cli.ts begin-hold "$@" ;;
+    esac
+    ;;
+  use|profiles)
+    shift
+    cd "$ROOT/packages/bridge"
+    if [[ "$CMD" == "profiles" ]]; then
+      exec npx tsx src/cli.ts profiles
+    fi
+    exec npx tsx src/cli.ts use "$@"
+    ;;
+  bridge)
+    shift
+    cd "$ROOT/packages/bridge"
+    exec npx tsx src/cli.ts "$@"
+    ;;
   smoke)
     exec bash "$ROOT/scripts/smoke-dispatch.sh"
     ;;
@@ -63,14 +80,38 @@ case "$CMD" in
     cat <<EOF
 orch — Codex ↔ OpenCode Orchestrator
 
-  orch                      本业务仓开新会话（并绑定 workspace）
-  orch resume [id|名|#]     恢复本仓会话
-  orch sessions             列出本仓会话
-  orch session pin <名>     给最近会话起别名
-  orch poll start|stop      plan 变更轮询
-  orch doctor / install / workspace / smoke / exec
+会话 / 业务仓
+  orch                         在当前目录开新 Codex 会话（并绑定）
+  orch workspace [路径]        查看或绑定业务仓
+  orch sessions                列出本仓 Codex 会话
+  orch resume [id|名|#]        恢复本仓会话（不是 OpenCode bridge resume）
+  orch session pin <名>        给最近会话起别名
+  orch session last            打印最近会话 uuid
+  orch exec "…"                非交互跑一轮 codex exec
 
-文档: $ROOT/docs/USAGE.md
+切换 API / 模型（名字来自 config/profiles.yaml）
+  orch use                     列出可选 profile，并显示当前选中
+  orch use ikuncode-haiku      IKunCode · Haiku（便宜，默认）
+  orch use ikuncode-sonnet     IKunCode · Sonnet（更强；同商家尽量保留上下文）
+  orch use siliconflow-v3      SiliconFlow · DeepSeek V3（需 .env 有对应 Key）
+  orch use mock                不调真实 API（冒烟）
+  orch profiles                同 orch use（仅列表）
+
+轮询 / 等人输入
+  orch poll start [--interval 60] [--session uuid]
+  orch poll stop
+  orch begin-hold [--kind otp] [--hint '…']
+  orch wait-reply [--timeout 900]
+  orch provide-reply --reply '验证码或回答'
+
+控制面
+  orch bridge <子命令>         如 status / dispatch / resume / mark-complete
+  orch doctor | install | smoke | help
+
+文档:
+  $ROOT/docs/USAGE.md
+  $ROOT/docs/ORCH.md
+  $ROOT/config/README.md
 EOF
     ;;
   *)

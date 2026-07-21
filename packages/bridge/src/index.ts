@@ -6,15 +6,22 @@ import {
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import {
+  beginUserHoldTool,
   dispatch,
   getWorkspaceTool,
   interrupt,
   listPlansTool,
+  listProfilesTool,
+  markComplete,
   progress,
+  provideUserReplyTool,
+  resume,
   reviewContext,
   rework,
   setWorkspaceTool,
   status,
+  useProfileTool,
+  waitForUserReplyTool,
   writePlanTool,
 } from "./orchestrator.js";
 import { loadDotEnv, repoRoot } from "./config.js";
@@ -98,10 +105,27 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: "status",
-      description: "Poll run status（需已绑定）。",
+      description:
+        "Poll OpenCode 活动态 + plan phase 勾选。不会把 idle 标成任务完成；completed 只能 mark_complete。",
       inputSchema: {
         type: "object",
         properties: { runId: { type: "string" } },
+      },
+    },
+    {
+      name: "mark_complete",
+      description:
+        "【仅 Codex】验收通过后标记任务 completed。OpenCode / poll 不得调用此语义；phase 勾选不等于任务完成。",
+      inputSchema: {
+        type: "object",
+        properties: {
+          runId: { type: "string" },
+          note: { type: "string", description: "验收说明" },
+          force: {
+            type: "boolean",
+            description: "非 awaiting_review 时强制标记",
+          },
+        },
       },
     },
     {
@@ -114,7 +138,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: "rework",
-      description: "Interrupt and dispatch again（需已绑定）。",
+      description:
+        "Interrupt and dispatch again（需已绑定）。会杀掉当前会话；OTP/网页登录场景请改用 resume。",
       inputSchema: {
         type: "object",
         properties: {
@@ -123,6 +148,73 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           confirm: { type: "boolean" },
         },
         required: ["extraInstructions"],
+      },
+    },
+    {
+      name: "resume",
+      description:
+        "在同一 OpenCode 会话继续（不 interrupt）。keepAlive 交互等待（OTP/CLI/设备确认等）必须用这个或 provide_user_reply，不要 rework。可选写入 user-reply.md。",
+      inputSchema: {
+        type: "object",
+        properties: {
+          runId: { type: "string" },
+          message: {
+            type: "string",
+            description: "发给执行器的继续指令",
+          },
+          userReply: {
+            type: "string",
+            description: "用户回复原文；会写入业务仓 .orchestrator/user-reply.md 并解锁 wait-reply",
+          },
+        },
+        required: ["message"],
+      },
+    },
+    {
+      name: "begin_user_hold",
+      description:
+        "打开人类门禁（needs-user.md + hold.json + 重置 user-reply）。keepAlive 场景由执行端在保持现场后调用，再 wait_for_user_reply。",
+      inputSchema: {
+        type: "object",
+        properties: {
+          kind: {
+            type: "string",
+            description: "otp|credentials|decision|2fa|captcha|device|cli|process|browser|secret|other",
+          },
+          keepAlive: { type: "boolean" },
+          holdHint: {
+            type: "string",
+            description: "仍保持的现场描述，如 browser IAAA SMS page / ssh sudo prompt",
+          },
+          question: { type: "string" },
+          needWhat: { type: "string" },
+          runId: { type: "string" },
+        },
+      },
+    },
+    {
+      name: "provide_user_reply",
+      description:
+        "把用户输入写入 .orchestrator/user-reply.md（解锁执行端 wait-reply）。可单独用；常与 resume 一起。",
+      inputSchema: {
+        type: "object",
+        properties: {
+          reply: { type: "string" },
+          resolveNeedsUser: { type: "boolean" },
+        },
+        required: ["reply"],
+      },
+    },
+    {
+      name: "wait_for_user_reply",
+      description:
+        "阻塞等待 .orchestrator/user-reply.md（执行端在保持浏览器/CLI/进程现场时调用）。超时默认 900s。",
+      inputSchema: {
+        type: "object",
+        properties: {
+          timeoutSec: { type: "number" },
+          pollMs: { type: "number" },
+        },
       },
     },
     {
@@ -142,6 +234,27 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       inputSchema: {
         type: "object",
         properties: { runId: { type: "string" } },
+      },
+    },
+    {
+      name: "list_profiles",
+      description:
+        "列出可切换的 API/模型 profile，并显示当前 active（config/profiles.yaml）。",
+      inputSchema: { type: "object", properties: {} },
+    },
+    {
+      name: "use_profile",
+      description:
+        "切换当前 OpenCode API/模型 profile（orch use）。同商家换模型或换商家均可。",
+      inputSchema: {
+        type: "object",
+        properties: {
+          name: {
+            type: "string",
+            description: "profiles.yaml 中的 profile 名，如 ikuncode-haiku",
+          },
+        },
+        required: ["name"],
       },
     },
     {
@@ -187,6 +300,13 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
       case "status":
         result = await status(args.runId as string | undefined);
         break;
+      case "mark_complete":
+        result = await markComplete({
+          runId: args.runId as string | undefined,
+          note: args.note as string | undefined,
+          force: args.force as boolean | undefined,
+        });
+        break;
       case "interrupt":
         result = await interrupt(args.runId as string | undefined);
         break;
@@ -197,6 +317,48 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
           confirm: args.confirm as boolean | undefined,
         });
         break;
+      case "resume":
+        result = await resume({
+          runId: args.runId as string | undefined,
+          message: String(args.message || ""),
+          userReply:
+            args.userReply !== undefined
+              ? String(args.userReply)
+              : undefined,
+        });
+        break;
+      case "begin_user_hold":
+        result = beginUserHoldTool({
+          kind: args.kind as string | undefined,
+          keepAlive:
+            args.keepAlive === undefined
+              ? undefined
+              : Boolean(args.keepAlive),
+          holdHint: args.holdHint as string | undefined,
+          question: args.question as string | undefined,
+          needWhat: args.needWhat as string | undefined,
+          runId: args.runId as string | undefined,
+        });
+        break;
+      case "provide_user_reply":
+        result = provideUserReplyTool({
+          reply: String(args.reply || ""),
+          resolveNeedsUser:
+            args.resolveNeedsUser === undefined
+              ? undefined
+              : Boolean(args.resolveNeedsUser),
+        });
+        break;
+      case "wait_for_user_reply":
+        result = await waitForUserReplyTool({
+          timeoutSec:
+            args.timeoutSec !== undefined
+              ? Number(args.timeoutSec)
+              : undefined,
+          pollMs:
+            args.pollMs !== undefined ? Number(args.pollMs) : undefined,
+        });
+        break;
       case "progress":
         result = await progress({
           runId: args.runId as string | undefined,
@@ -205,6 +367,12 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
         break;
       case "review_context":
         result = await reviewContext(args.runId as string | undefined);
+        break;
+      case "list_profiles":
+        result = listProfilesTool();
+        break;
+      case "use_profile":
+        result = await useProfileTool(String(args.name || ""));
         break;
       case "repo_root":
         result = { root: repoRoot() };

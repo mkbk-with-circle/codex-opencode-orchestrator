@@ -1,0 +1,15 @@
+{
+  "provider": {
+    "siliconflow": {
+      "npm": "@ai-sdk/openai-compatible",
+      "options": {
+        "baseURL": "https://api.siliconflow.cn/v1",
+        "apiKey": "{env:SILICONFLOW_API_KEY}"
+      },
+      "models": {
+        "deepseek-ai/DeepSeek-V3": {}
+      }
+    }
+  },
+  "model": "siliconflow/deepseek-ai/DeepSeek-V3"
+}

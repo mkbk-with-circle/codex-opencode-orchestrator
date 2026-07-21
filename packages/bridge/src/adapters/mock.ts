@@ -54,26 +54,35 @@ export class MockExecutor implements ExecutorAdapter {
 
     return {
       sessionId,
-      summary: `Mock executor completed in ${args.workspace}`,
+      summary: `Mock executor finished phases in ${args.workspace} (awaiting Codex review)`,
     };
   }
 
   async poll(args: { run: RunState }): Promise<PollResult> {
     if (args.run.status === "interrupted") {
-      return { status: "interrupted", progress: "aborted", summary: "interrupted" };
+      return {
+        activity: "interrupted",
+        status: "interrupted",
+        progress: "aborted",
+        summary: "interrupted",
+      };
     }
     if (fs.existsSync(doneMarker(args.run.id))) {
       return {
-        status: "completed",
-        progress: "Mock work finished",
-        summary: "Mock executor completed successfully",
+        activity: "idle",
+        status: "awaiting_review",
+        progress: "Mock work finished — awaiting Codex mark_complete",
+        summary: "Mock executor idle (awaiting Codex review)",
         diffSummary: "mock: possible hello.txt update",
+        seenBusy: true,
       };
     }
     return {
+      activity: "busy",
       status: "running",
       progress: "Mock executor working...",
       summary: "in progress",
+      seenBusy: true,
     };
   }
 
@@ -90,20 +99,21 @@ export class MockExecutor implements ExecutorAdapter {
 }
 
 export function ensureWorktree(
-  root: string,
+  gitRoot: string,
+  workspaceAbs: string,
   runId: string,
   workspaceRel: string,
 ): string {
-  const wt = path.join(root, "runs", runId, "worktree");
+  const wt = path.join(workspaceAbs, ".orchestrator", "runs", runId, "worktree");
   if (fs.existsSync(wt)) return path.join(wt, workspaceRel);
   try {
     execFileSync("git", ["worktree", "add", "--detach", wt, "HEAD"], {
-      cwd: root,
+      cwd: gitRoot,
       stdio: "pipe",
     });
   } catch {
     fs.mkdirSync(wt, { recursive: true });
-    const src = path.join(root, workspaceRel);
+    const src = path.join(gitRoot, workspaceRel);
     const dest = path.join(wt, workspaceRel);
     fs.mkdirSync(path.dirname(dest), { recursive: true });
     if (fs.existsSync(src)) {

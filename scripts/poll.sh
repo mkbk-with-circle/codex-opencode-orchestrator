@@ -137,13 +137,13 @@ meta = {
   'workspace': '''$workspace''',
   'pid': int('''$real_pid'''),
   'log': '''$LOG_FILE''',
-  'mode': 'plan-mtime-wake-current-session',
+  'mode': 'plan-or-needs-user-mtime-wake',
   'stop': 'orch poll stop',
 }
 open('''$META_FILE''','w').write(json.dumps(meta, ensure_ascii=False, indent=2)+'\n')
 print(json.dumps(meta, ensure_ascii=False, indent=2))
 "
-  echo "POLL_STARTED — 仅 plan 变更时唤醒会话；取消: orch poll stop"
+  echo "POLL_STARTED — plan / needs-user 变更时唤醒；取消: orch poll stop"
 }
 
 case "${1:-}" in
@@ -162,9 +162,11 @@ case "${1:-}" in
   orch poll start [--interval 60] [--session <uuid>]
   orch poll stop
 
-每隔 interval 秒看绑定仓 .orchestrator/plans/：
-  有修改 → resume 当前会话查进度
-  无修改 → 不调用模型
+每隔 interval 秒看绑定仓:
+  .orchestrator/plans/*.md
+  .orchestrator/needs-user.md（需用户输入时 OpenCode 写入）
+有修改 → resume 当前会话查进度 / 向用户提问
+无修改 → 不调用模型
 EOF
     ;;
   *)

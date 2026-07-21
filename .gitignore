@@ -3,12 +3,10 @@
 .env.local
 *.pem
 config/workspace.local.yaml
+config/active.local.yaml
 
-# Runtime artifacts
-runs/**
-!runs/.gitkeep
-briefs/**
-!briefs/.gitkeep
+# Local logs (opencode serve etc.)
+logs/**
 *.log
 
 # Node
@@ -25,5 +23,5 @@ packages/bridge/*.tsbuildinfo
 # OpenCode local cache (if any)
 .opencode/cache/
 
-# Per-workspace orchestrator plans (live under business repos; also under playground when smoking)
+# Per-workspace orchestrator artifacts (plans/briefs/runs/needs-user)
 **/.orchestrator/

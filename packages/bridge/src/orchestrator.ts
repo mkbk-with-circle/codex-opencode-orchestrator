@@ -3,7 +3,6 @@ import { randomUUID } from "node:crypto";
 // path used for brief/workspace resolution
 import {
   loadDotEnv,
-  loadExecutors,
   loadOrchestratorConfig,
   repoRoot,
 } from "./config.js";
@@ -15,6 +14,7 @@ import {
   newRunId,
   readState,
   readText,
+  shouldSaveBriefs,
   writeBrief,
   writeState,
 } from "./state.js";
@@ -31,6 +31,18 @@ import {
   setUserTargetWorkspace,
 } from "./workspace.js";
 import fs from "node:fs";
+import {
+  beginUserHoldTool,
+  provideUserReply,
+  provideUserReplyTool,
+  waitForUserReplyTool,
+} from "./user-hold.js";
+import {
+  listProfilesTool,
+  resolveExecutor,
+  resolveProfileToExecutor,
+  useProfileTool,
+} from "./profiles.js";
 
 loadDotEnv();
 
@@ -40,20 +52,22 @@ function getAdapter(type: string): ExecutorAdapter {
   throw new Error(`Unknown executor type: ${type}`);
 }
 
-function resolveExecutorId(override?: string): string {
-  const cfg = loadOrchestratorConfig();
-  return (
-    override ||
-    process.env.ORCHESTRATOR_EXECUTOR ||
-    cfg.default_executor ||
-    "mock"
-  );
+function executorDefForRun(state: RunState, root = repoRoot()) {
+  try {
+    return resolveProfileToExecutor(state.executorId, root).def;
+  } catch {
+    return {
+      type: state.executorType as "mock" | "opencode-http",
+      options: {},
+    };
+  }
 }
 
 function buildBriefFromPlan(
   plan: string,
   extra: string | undefined,
   workspaceAbs: string,
+  planAbsPath?: string,
 ): string {
   return [
     "# Execution Brief",
@@ -66,6 +80,46 @@ function buildBriefFromPlan(
     "",
     "All file edits, builds, and tests happen **only** under this directory unless the plan says otherwise.",
     "",
+    "## Progress checkboxes (REQUIRED)",
+    "",
+    "The plan has a `## 步骤` / `## Todo` section with GitHub-style checkboxes `- [ ]` / `- [x]`.",
+    planAbsPath
+      ? `Edit **this same plan file** as you go: \`${planAbsPath}\``
+      : "Edit the plan file under `.orchestrator/plans/` as you go.",
+    "",
+    "Rules:",
+    "1. After finishing a **phase/step**, change that line from `- [ ]` to `- [x]` and save the file.",
+    "2. Do not delete steps; only toggle the checkbox.",
+    "3. Work top-to-bottom; leave unfinished steps as `- [ ]`.",
+    "4. Codex reads this file for phase progress — keep it accurate.",
+    "5. You may report that **your phases** are done. You MUST NOT declare the overall task complete.",
+    "6. Final task acceptance is Codex's job (`mark_complete`). Stop when phases are done or blocked.",
+    "",
+    "## When you need the human (REQUIRED)",
+    "",
+    "If you need account/password/Cookie/Token/API key/OTP/2FA/captcha/a choice/device approval — anything only the human can provide:",
+    "1. STOP guessing. Do not invent secrets.",
+    `2. Prefer writing a hold via the orchestrator protocol under \`${workspaceAbs}/.orchestrator/\`:`,
+    "   - `needs-user.md` + `hold.json` (keepAlive: true when a live session must survive)",
+    "   - clear/reset `user-reply.md` with a waitToken",
+    "3. Leave unfinished phases as `- [ ]`. Do not mark them done.",
+    "4. Reply with NEED_USER.",
+    "",
+    "## Interactive hold — keep the live session (REQUIRED for any in-flight interaction)",
+    "",
+    "Applies to **all** live contexts, not only websites: browser login/OTP, CLI prompts,",
+    "SSH/device confirmation, 2FA apps, CAPTCHA, mid-flow human choices, long-running REPLs, etc.",
+    "",
+    "Protocol:",
+    "1. **Keep the scene**: do not close the browser / kill the login script / exit the CLI / drop the SSH/TTY / restart the step that is waiting.",
+    "2. Open the hold (`needs-user.md`, `keepAlive: true`, optional `holdHint` describing what is still open).",
+    "3. **Block-wait** for the human reply without tearing down the scene:",
+    "   - preferred: run `wait-reply` (bridge CLI / MCP `wait_for_user_reply`) which polls `.orchestrator/user-reply.md`",
+    "   - or poll that file yourself in the same process that holds the session",
+    "4. When reply arrives: apply it **in the current scene**. Do **not** restart the interaction unless the remote side explicitly invalidated it.",
+    "5. Codex delivers the reply with `provide_user_reply` and/or same-session `resume`. **Never** use `rework`/new `dispatch` to feed an answer into a keepAlive hold (that kills the session).",
+    "6. For browsers: headed + persistent profile under `.orchestrator/browser-profile/` is recommended.",
+    "",
     "## Plan (source of truth)",
     "",
     plan.trim(),
@@ -76,6 +130,8 @@ function buildBriefFromPlan(
     "- Stay in scope",
     "- Do not push git remotes",
     "- Destructive commands require human confirmation (orchestrator gates)",
+    "- When blocked on user input: NEED_USER + keepAlive wait-reply (not rework)",
+    "- When your phases are done: PHASES_DONE (not TASK_COMPLETE)",
     "",
   ].join("\n");
 }
@@ -91,7 +147,6 @@ export async function dispatch(args: {
 }): Promise<Record<string, unknown>> {
   const root = repoRoot();
   const orch = loadOrchestratorConfig(root);
-  const execs = loadExecutors(root);
   const bound = requireBoundWorkspace(root);
 
   if (args.workspace?.trim()) {
@@ -111,9 +166,12 @@ export async function dispatch(args: {
 
   const planAbs = resolveBoundPlanPath(bound, args.planPath);
   const plan = readText(planAbs, root);
-  const executorId = resolveExecutorId(args.executorId);
-  const def = execs.executors[executorId];
+  const resolved = resolveExecutor(args.executorId, orch.default_executor, root);
+  const executorId = resolved.id;
+  const def = resolved.def;
   if (!def) throw new Error(`Unknown executor id: ${executorId}`);
+  const model =
+    typeof def.options?.model === "string" ? def.options.model : undefined;
 
   // Force execution cwd = bound (ignore plan frontmatter / defaults)
   const ws = resolveTargetWorkspace({
@@ -125,32 +183,41 @@ export async function dispatch(args: {
 
   const needConfirm =
     args.confirm !== undefined ? args.confirm : orch.confirm_before_dispatch;
+  const saveBriefs = shouldSaveBriefs(orch.save_briefs);
 
   if (needConfirm && !args.confirmedToken) {
     const id = newRunId();
-    const brief = buildBriefFromPlan(plan, args.extraInstructions, ws.absPath);
-    const briefPath = writeBrief(id, brief, root);
+    const brief = buildBriefFromPlan(
+      plan,
+      args.extraInstructions,
+      ws.absPath,
+      planAbs,
+    );
+    const briefPath =
+      writeBrief(id, brief, bound.absPath, { save: saveBriefs }) || "";
     const token = randomUUID();
     const state: RunState = {
       id,
       status: "awaiting_confirm",
       executorId,
       executorType: def.type,
+      model,
       planPath: planAbs,
-      briefPath: path.relative(root, briefPath),
+      briefPath,
       workspace: ws.label,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       confirmToken: token,
       summary: "Brief ready — re-call dispatch with confirmedToken to start",
     };
-    writeState(state, root);
+    writeState(state, bound.absPath);
     return {
       ok: true,
       needsConfirm: true,
       runId: id,
       confirmToken: token,
-      briefPath: state.briefPath,
+      briefPath: state.briefPath || null,
+      briefSaved: Boolean(state.briefPath),
       planPath: planAbs,
       workspace: ws.absPath,
       workspaceSource: "user_config",
@@ -164,7 +231,7 @@ export async function dispatch(args: {
 
   let state: RunState | null = null;
   if (args.confirmedToken) {
-    const active = findActiveRun(root);
+    const active = findActiveRun(bound.absPath);
     if (!active || active.confirmToken !== args.confirmedToken) {
       throw new Error("Invalid or missing confirmedToken");
     }
@@ -173,15 +240,22 @@ export async function dispatch(args: {
     state.planPath = planAbs;
   } else {
     const id = newRunId();
-    const brief = buildBriefFromPlan(plan, args.extraInstructions, ws.absPath);
-    const briefPath = writeBrief(id, brief, root);
+    const brief = buildBriefFromPlan(
+      plan,
+      args.extraInstructions,
+      ws.absPath,
+      planAbs,
+    );
+    const briefPath =
+      writeBrief(id, brief, bound.absPath, { save: saveBriefs }) || "";
     state = {
       id,
       status: "starting",
       executorId,
       executorType: def.type,
+      model,
       planPath: planAbs,
-      briefPath: path.relative(root, briefPath),
+      briefPath,
       workspace: ws.label,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
@@ -193,22 +267,32 @@ export async function dispatch(args: {
     plan,
     args.extraInstructions,
     workspaceAbs,
+    planAbs,
   );
-  writeBrief(state.id, briefFull, root);
-  state.briefPath = path.relative(root, path.join(root, "briefs", `${state.id}.md`));
+  state.briefPath =
+    writeBrief(state.id, briefFull, bound.absPath, { save: saveBriefs }) || "";
   state.workspace = ws.label;
+  state.model = model;
+  state.executorId = executorId;
+  state.executorType = def.type;
 
   if (ws.useWorktree) {
     workspaceAbs = ensureWorktree(
       root,
+      bound.absPath,
       state.id,
       path.isAbsolute(ws.label) ? orch.default_workspace : ws.label,
     );
-    state.worktreePath = path.join("runs", state.id, "worktree");
+    state.worktreePath = path.join(
+      ".orchestrator",
+      "runs",
+      state.id,
+      "worktree",
+    );
   }
 
   state.status = "starting";
-  writeState(state, root);
+  writeState(state, bound.absPath);
 
   const adapter = getAdapter(def.type);
   try {
@@ -221,14 +305,34 @@ export async function dispatch(args: {
     state.sessionId = started.sessionId;
     state.status = "running";
     state.summary = started.summary;
-    writeState(state, root);
+    state.promptSentAt = new Date().toISOString();
+    state.seenBusy = false;
+    writeState(state, bound.absPath);
 
-    const poll = await adapter.poll({ run: state, options: def.options });
-    if (poll.status === "completed") {
-      state.status = "completed";
+    // 等一小段时间看是否进入 busy；不要把「启动瞬间的 idle」当成完成
+    for (let i = 0; i < 20; i++) {
+      await new Promise((r) => setTimeout(r, 500));
+      const poll = await adapter.poll({ run: state, options: def.options });
+      if (poll.seenBusy) state.seenBusy = true;
       state.lastProgress = poll.progress;
-      state.summary = poll.summary;
-      writeState(state, root);
+      state.summary = poll.summary || state.summary;
+      if (poll.status === "running" && poll.seenBusy) {
+        state.status = "running";
+        writeState(state, bound.absPath);
+        break;
+      }
+      if (poll.status === "awaiting_review") {
+        state.status = "awaiting_review";
+        writeState(state, bound.absPath);
+        break;
+      }
+      if (poll.status === "stalled" || poll.status === "failed") {
+        state.status = poll.status;
+        state.error = poll.summary;
+        writeState(state, bound.absPath);
+        break;
+      }
+      writeState(state, bound.absPath);
     }
 
     return {
@@ -238,17 +342,30 @@ export async function dispatch(args: {
       status: state.status,
       sessionId: state.sessionId,
       summary: state.summary,
+      lastProgress: state.lastProgress,
       worktreePath: state.worktreePath,
       planPath: planAbs,
+      briefPath: state.briefPath || null,
+      briefSaved: Boolean(state.briefPath),
+      profile: resolved.profile || executorId,
+      model: def.options?.model ?? null,
+      executorId,
+      executorSource: resolved.source,
       workspace: workspaceAbs,
       workspaceSource: bound.source,
       workspaceBound: true,
       workspaceExternal: ws.isExternal,
+      message:
+        state.status === "running"
+          ? "OpenCode 已启动。最终完成只能由 Codex 判定；请用 $opencode-supervise 看 phase 勾选，用 $opencode-review + mark_complete 收尾。"
+          : state.status === "awaiting_review"
+            ? "OpenCode 已停手（awaiting_review）。请 Codex 读 plan 勾选并验收；通过后调用 mark_complete，不要把 idle 当成任务完成。"
+            : undefined,
     };
   } catch (e) {
     state.status = "failed";
     state.error = e instanceof Error ? e.message : String(e);
-    writeState(state, root);
+    writeState(state, bound.absPath);
     throw e;
   }
 }
@@ -365,43 +482,181 @@ export async function getWorkspaceTool() {
 }
 
 export async function status(runId?: string): Promise<Record<string, unknown>> {
-  requireBoundWorkspace();
+  const bound = requireBoundWorkspace();
   const root = repoRoot();
-  const execs = loadExecutors(root);
-  const state = runId ? readState(runId, root) : findActiveRun(root) || latestRun(root);
+  const state = runId ? readState(runId, bound.absPath) : findActiveRun(bound.absPath) || latestRun(bound.absPath);
   if (!state) return { ok: false, message: "No runs found" };
-  const def = execs.executors[state.executorId];
+  const def = executorDefForRun(state, root);
   const adapter = getAdapter(def?.type || state.executorType);
   const poll = await adapter.poll({
     run: state,
     options: def?.options || {},
   });
-  if (state.status === "running" || state.status === "starting") {
+  if (poll.seenBusy) state.seenBusy = true;
+
+  // 终态 completed / interrupted 不由 poll 覆盖；completed 只能 mark_complete
+  if (
+    state.status !== "completed" &&
+    state.status !== "interrupted" &&
+    (state.status === "running" ||
+      state.status === "starting" ||
+      state.status === "awaiting_review" ||
+      state.status === "stalled")
+  ) {
     state.status = poll.status;
     state.lastProgress = poll.progress;
     state.summary = poll.summary || state.summary;
-    writeState(state, root);
+    if (poll.status === "stalled" || poll.status === "failed") {
+      state.error = poll.summary;
+    } else {
+      state.error = undefined;
+    }
+    writeState(state, bound.absPath);
   }
+
+  const phases = parsePlanPhases(state.planPath, root);
+  const needsUser = readNeedsUser(requireBoundWorkspace().absPath);
   return {
     ok: true,
     run: state,
     poll,
-    workspace: requireBoundWorkspace().absPath,
+    phases,
+    needsUser,
+    completionPolicy: {
+      openCodeOwns: "phase checkboxes (- [x]) only",
+      codexOwns: "final task completion via mark_complete",
+      humanGate:
+        "If needsUser.open, Codex must stop and ask the human ($opencode-ask-user)",
+      note:
+        needsUser?.open
+          ? "需要用户输入：停止推进，按 $opencode-ask-user 提问。"
+          : state.status === "awaiting_review"
+            ? "OpenCode 已停手。请 Codex 验收后 mark_complete，或 rework。"
+            : state.status === "completed"
+              ? "任务已由 Codex 标记完成。"
+              : undefined,
+    },
+    workspace: bound.absPath,
+  };
+}
+
+/** Codex 在验收通过后标记任务完成；OpenCode / poll 不得写入此状态 */
+export async function markComplete(args?: {
+  runId?: string;
+  note?: string;
+  force?: boolean;
+}): Promise<Record<string, unknown>> {
+  const bound = requireBoundWorkspace();
+  const root = repoRoot();
+  const state = args?.runId
+    ? readState(args.runId, bound.absPath)
+    : findActiveRun(bound.absPath) || latestRun(bound.absPath);
+  if (!state) return { ok: false, message: "No runs found" };
+  if (state.status === "completed") {
+    return { ok: true, run: state, message: "Already completed by Codex" };
+  }
+  if (
+    !args?.force &&
+    state.status !== "awaiting_review" &&
+    state.status !== "running" &&
+    state.status !== "stalled"
+  ) {
+    return {
+      ok: false,
+      run: state,
+      message: `当前状态 ${state.status} 不宜 mark_complete；可传 force:true 强制。`,
+    };
+  }
+  const phases = parsePlanPhases(state.planPath, root);
+  state.status = "completed";
+  state.summary = args?.note?.trim()
+    ? `Codex accepted: ${args.note.trim()}`
+    : "Codex accepted (mark_complete)";
+  state.lastProgress = state.summary;
+  state.error = undefined;
+  writeState(state, bound.absPath);
+  return {
+    ok: true,
+    run: state,
+    phases,
+    message: "任务已由 Codex 标记为 completed。OpenCode 不得自行宣布任务完成。",
+  };
+}
+
+function parsePlanPhases(
+  planPath: string,
+  root: string,
+): {
+  done: string[];
+  open: string[];
+  doneCount: number;
+  openCount: number;
+  total: number;
+  allPhasesChecked: boolean;
+} {
+  let text = "";
+  try {
+    text = readText(planPath, root);
+  } catch {
+    return {
+      done: [],
+      open: [],
+      doneCount: 0,
+      openCount: 0,
+      total: 0,
+      allPhasesChecked: false,
+    };
+  }
+  const done: string[] = [];
+  const open: string[] = [];
+  for (const line of text.split("\n")) {
+    const m = line.match(/^\s*[-*]\s*\[([ xX])\]\s+(.*)$/);
+    if (!m) continue;
+    const title = m[2].trim();
+    if (m[1].toLowerCase() === "x") done.push(title);
+    else open.push(title);
+  }
+  return {
+    done,
+    open,
+    doneCount: done.length,
+    openCount: open.length,
+    total: done.length + open.length,
+    allPhasesChecked: done.length + open.length > 0 && open.length === 0,
+  };
+}
+
+function readNeedsUser(workspaceAbs: string): {
+  open: boolean;
+  path: string;
+  kind?: string;
+  preview?: string;
+} {
+  const p = path.join(workspaceAbs, ".orchestrator", "needs-user.md");
+  if (!fs.existsSync(p)) return { open: false, path: p };
+  const text = fs.readFileSync(p, "utf8");
+  const status =
+    text.match(/^status:\s*(\S+)/m)?.[1]?.toLowerCase() || "open";
+  const kind = text.match(/^kind:\s*(\S+)/m)?.[1];
+  return {
+    open: status === "open",
+    path: p,
+    kind,
+    preview: text.slice(0, 800),
   };
 }
 
 export async function interrupt(runId?: string): Promise<Record<string, unknown>> {
-  requireBoundWorkspace();
+  const bound = requireBoundWorkspace();
   const root = repoRoot();
-  const execs = loadExecutors(root);
-  const state = runId ? readState(runId, root) : findActiveRun(root);
+  const state = runId ? readState(runId, bound.absPath) : findActiveRun(bound.absPath);
   if (!state) return { ok: false, message: "No active run" };
-  const def = execs.executors[state.executorId];
+  const def = executorDefForRun(state, root);
   const adapter = getAdapter(def?.type || state.executorType);
   const res = await adapter.abort({ run: state, options: def?.options || {} });
   state.status = "interrupted";
   state.summary = res.summary;
-  writeState(state, root);
+  writeState(state, bound.absPath);
   return { ok: res.ok, run: state };
 }
 
@@ -419,26 +674,106 @@ export async function rework(args: {
   });
 }
 
+/**
+ * Continue the same OpenCode session without interrupt/dispatch.
+ * Use after ask-user for any keepAlive hold (browser, CLI, device, OTP, …).
+ */
+export async function resume(args: {
+  runId?: string;
+  message: string;
+  /** If set, write raw user reply to {workspace}/.orchestrator/user-reply.md first */
+  userReply?: string;
+}): Promise<Record<string, unknown>> {
+  const bound = requireBoundWorkspace();
+  const root = repoRoot();
+  const state = args.runId
+    ? readState(args.runId, bound.absPath)
+    : findActiveRun(bound.absPath) || latestRun(bound.absPath);
+  if (!state) {
+    return {
+      ok: false,
+      message:
+        "没有可 resume 的 run。keepAlive 场景不要改用 rework；请先 status 找到仍存活的 run/session。若执行端正在 wait-reply，可只调用 provide_user_reply。",
+    };
+  }
+  if (!state.sessionId) {
+    return {
+      ok: false,
+      message: `run ${state.id} 没有 sessionId，无法同会话 resume（rework 会开新会话并可能丢掉现场）。`,
+    };
+  }
+
+  let replyPath: string | undefined;
+  if (args.userReply !== undefined) {
+    replyPath = provideUserReply(bound.absPath, args.userReply).replyPath;
+  } else {
+    const needsPath = path.join(bound.absPath, ".orchestrator", "needs-user.md");
+    if (fs.existsSync(needsPath)) {
+      const text = fs.readFileSync(needsPath, "utf8");
+      if (/^status:\s*open\b/im.test(text)) {
+        fs.writeFileSync(
+          needsPath,
+          text.replace(/^status:\s*open\b/im, "status: resolved"),
+          "utf8",
+        );
+      }
+    }
+  }
+
+  const prompt = [
+    args.message.trim(),
+    "",
+    "CONSTRAINTS (mandatory) — interactive hold / keepAlive:",
+    "- Continue the CURRENT OpenCode session and ANY still-open live scene",
+    "  (browser page, CLI prompt, SSH/TTY, device approval flow, REPL, etc.).",
+    "- Do NOT restart that interaction unless the remote side explicitly invalidated it",
+    "  (e.g. OTP expired, session killed).",
+    "- If `.orchestrator/user-reply.md` exists, read it and apply the reply in the current scene.",
+    "- Do NOT tear down the scene (no browser.close / killing the waiting process) until the step succeeds or the human cancels.",
+  ].join("\n");
+
+  const result = await progress({ runId: state.id, prompt });
+  return {
+    ...result,
+    ok: true,
+    resumed: true,
+    runId: state.id,
+    sessionId: state.sessionId,
+    replyPath,
+    message:
+      "已向同一 OpenCode 会话发送 resume（未 interrupt）。若执行端在 wait-reply，user-reply 也会解锁阻塞等待。",
+  };
+}
+
+export {
+  beginUserHoldTool,
+  provideUserReplyTool,
+  waitForUserReplyTool,
+  listProfilesTool,
+  useProfileTool,
+};
+
 export async function progress(args?: {
   runId?: string;
   prompt?: string;
+  model?: string;
 }): Promise<Record<string, unknown>> {
-  requireBoundWorkspace();
+  const bound = requireBoundWorkspace();
   const root = repoRoot();
-  const execs = loadExecutors(root);
   const state = args?.runId
-    ? readState(args.runId, root)
-    : findActiveRun(root) || latestRun(root);
+    ? readState(args.runId, bound.absPath)
+    : findActiveRun(bound.absPath) || latestRun(bound.absPath);
   if (!state) return { ok: false, message: "No runs found" };
-  const def = execs.executors[state.executorId];
+  const def = executorDefForRun(state, root);
   const adapter = getAdapter(def?.type || state.executorType);
   const res = await adapter.progress({
     run: state,
     options: def?.options || {},
     prompt: args?.prompt,
+    model: args?.model || state.model,
   });
   state.lastProgress = res.progress;
-  writeState(state, root);
+  writeState(state, bound.absPath);
   return { ok: true, runId: state.id, progress: res.progress };
 }
 
@@ -446,10 +781,20 @@ export async function reviewContext(runId?: string): Promise<Record<string, unkn
   const bound = requireBoundWorkspace();
   const root = repoRoot();
   const orch = loadOrchestratorConfig(root);
-  const state = runId ? readState(runId, root) : latestRun(root);
+  const state = runId ? readState(runId, bound.absPath) : latestRun(bound.absPath);
   if (!state) return { ok: false, message: "No runs found" };
   const plan = readText(state.planPath, root);
-  const brief = readText(state.briefPath, root);
+  let brief = "";
+  if (state.briefPath) {
+    try {
+      brief = readText(state.briefPath, root);
+    } catch {
+      brief = "(brief file missing)";
+    }
+  } else {
+    brief =
+      "(brief was not persisted; set save_briefs: true or unset ORCHESTRATOR_SAVE_BRIEFS)";
+  }
   if (path.isAbsolute(state.planPath)) {
     assertInsideBound(state.planPath, bound, "planPath");
   }
@@ -459,6 +804,7 @@ export async function reviewContext(runId?: string): Promise<Record<string, unkn
     run: state,
     plan,
     brief,
+    briefSaved: Boolean(state.briefPath),
     status: st,
     workspace: bound.absPath,
     acceptanceCommands: orch.acceptance?.commands || [],

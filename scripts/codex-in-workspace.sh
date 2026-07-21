@@ -25,6 +25,10 @@ fi
 echo "codex:        $CODEX_BIN"
 echo "orchestrator: $ORCHESTRATOR_ROOT"
 echo "workspace:    $TARGET_WORKSPACE"
+# 默认便宜模型（可用 CODEX_MODEL / CODEX_REASONING_EFFORT 覆盖）
+CODEX_MODEL="${CODEX_MODEL:-gpt-5.6-luna}"
+CODEX_REASONING_EFFORT="${CODEX_REASONING_EFFORT:-low}"
+echo "codex model:  $CODEX_MODEL ($CODEX_REASONING_EFFORT)"
 echo
 
 # Sync user workspace.env for bridge/MCP
@@ -39,6 +43,8 @@ case "$MODE" in
     shift
     PROMPT="${*:-Reply with PONG only.}"
     exec "$CODEX_BIN" exec --skip-git-repo-check \
+      -m "$CODEX_MODEL" \
+      -c "model_reasoning_effort=\"${CODEX_REASONING_EFFORT}\"" \
       -C "$TARGET_WORKSPACE" \
       "$PROMPT" </dev/null
     ;;
@@ -55,6 +61,7 @@ case "$MODE" in
   $(basename "$0") exec 'prompt'   非交互
 
 等价: orch / orch resume / orch sessions
+默认 Codex 模型: gpt-5.6-luna / low（可用环境变量 CODEX_MODEL、CODEX_REASONING_EFFORT 覆盖）
 EOF
     exit 0
     ;;
@@ -65,7 +72,10 @@ echo "      给当前会话起名   → 退出后 orch session pin <别名>"
 echo
 
 # Interactive: after exit, capture last session id for this workspace
-"$CODEX_BIN" -C "$TARGET_WORKSPACE" "$@" || status=$?
+"$CODEX_BIN" -C "$TARGET_WORKSPACE" \
+  -m "$CODEX_MODEL" \
+  -c "model_reasoning_effort=\"${CODEX_REASONING_EFFORT}\"" \
+  "$@" || status=$?
 status=${status:-0}
 bash "$ORCHESTRATOR_ROOT/scripts/sessions.sh" capture >/dev/null 2>&1 || true
 exit "$status"

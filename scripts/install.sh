@@ -116,16 +116,40 @@ if [[ -n "$WORKSPACE" ]]; then
   bash "$ROOT/scripts/set-workspace.sh" "$WORKSPACE"
 fi
 
+# --- 把 orch 永久加入 PATH（zsh/bash）---
+echo
+echo "== PATH: orch CLI =="
+chmod +x "$ROOT/bin/"* "$ROOT/scripts/"*.sh 2>/dev/null || true
+ensure_path_line() {
+  local rc="$1"
+  local line="export PATH=\"$ROOT/bin:\$PATH\""
+  local mark="# codex-opencode-orchestrator orch CLI"
+  [[ -f "$rc" ]] || touch "$rc"
+  if grep -Fq "codex-opencode-orchestrator/bin" "$rc" 2>/dev/null || grep -Fq "$ROOT/bin" "$rc" 2>/dev/null; then
+    echo "  已存在于 $rc"
+    return 0
+  fi
+  {
+    echo ""
+    echo "$mark"
+    echo "$line"
+  } >>"$rc"
+  echo "  已写入 $rc"
+}
+SHELL_NAME="$(basename "${SHELL:-zsh}")"
+case "$SHELL_NAME" in
+  bash) ensure_path_line "$HOME/.bashrc"; ensure_path_line "$HOME/.bash_profile" ;;
+  *) ensure_path_line "$HOME/.zshrc" ;;
+esac
+echo "  当前终端请执行: export PATH=\"$ROOT/bin:\$PATH\"  或新开一个终端"
+echo "  验证: command -v orch && orch help"
+
 # --- 便捷入口标记 ---
 MARKER="$HOME/.config/codex-opencode-orchestrator"
 mkdir -p "$MARKER"
 echo "ORCHESTRATOR_ROOT=$ROOT" >"$MARKER/install.env"
 echo "INSTALLED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$MARKER/install.env"
 echo "CODEX_BIN=$CODEX_BIN" >>"$MARKER/install.env"
-
-# shell wrapper hint
-WRAPPER="$ROOT/bin/orch"
-chmod +x "$ROOT/scripts/"*.sh "$ROOT/bin/"* 2>/dev/null || true
 
 echo
 echo "== doctor =="
@@ -139,25 +163,17 @@ fi
 
 echo
 echo "────────────────────────────────────────"
-echo "安装完成。下一步："
+echo "安装完成。请用 orch（不要用长 bash 路径）："
 echo
-echo "  # 1) 指定业务项目（OpenCode 真正改代码的地方）"
-echo "  bash $ROOT/scripts/set-workspace.sh ~/Projects/YourApp"
-echo
-echo "  # 2) 在业务仓启动 Codex（或任意目录）"
-echo "  cd ~/Projects/YourApp"
-echo "  bash $ROOT/scripts/codex-in-workspace.sh"
-echo
-echo "  # 3) 对话里用 /dispatch /status /review（Skills 已链到 ~/.agents/skills）"
-echo
-echo "  # 定时轮询（只要两个）:"
-echo "  bash $ROOT/bin/orch poll start --interval 60"
-echo "  bash $ROOT/bin/orch poll stop"
-echo
-echo "  健康检查: bash $ROOT/scripts/doctor.sh"
-echo "  说明:     $ROOT/docs/USAGE.md"
-echo "────────────────────────────────────────"
-echo "可选: 把下面加到 ~/.zshrc"
+echo "  # 若本终端还找不到 orch："
 echo "  export PATH=\"$ROOT/bin:\$PATH\""
-echo "  # 然后任意目录: orch   /  orch resume   /  orch poll start|stop"
+echo "  # 或新开终端（已写入 shell rc）"
+echo
+echo "  orch workspace ~/Projects/YourApp   # 绑定业务仓"
+echo "  cd ~/Projects/YourApp && orch      # 开对话"
+echo "  orch resume                        # 下次恢复"
+echo "  orch poll start / orch poll stop"
+echo "  orch doctor"
+echo
+echo "  说明: $ROOT/docs/USAGE.md"
 echo "────────────────────────────────────────"

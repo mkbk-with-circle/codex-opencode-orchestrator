@@ -1,130 +1,105 @@
 # 使用说明
 
-一张图理清两件事：
-
 ```text
-编排仓（本仓库）     → Skills / MCP / runs 状态
-业务仓（你的项目）   → 真正改代码；plan 也写在这里
+编排仓（本仓库）  → Skills / MCP / orch / 配置
+业务仓（你的项目）→ 代码与 plan / brief / runs
 ```
 
-必须先 **绑定业务仓**，否则 plan / 派工 / 验收会被程序拒绝。
+未绑定业务仓时，plan、派工、验收会被拒绝。
+
+- `orch` 命令详解 → [ORCH.md](./ORCH.md)  
+- API / 模型配置 → [config/README.md](../config/README.md)
 
 ---
 
-## 1. 安装（只做一次）
+## 安装
 
-**前提：** Node ≥ 18；已装 Codex CLI（或 ChatGPT / Codex 桌面端）；`codex login`。
+前提：Node ≥ 18；已安装 Codex CLI（或桌面端）；已 `codex login`。
 
 ```bash
 git clone https://github.com/mkbk-with-circle/codex-opencode-orchestrator.git
 cd codex-opencode-orchestrator
 bash scripts/install.sh --smoke
-bash scripts/doctor.sh          # 期望 DOCTOR_OK
+orch doctor
 ```
 
-`install.sh` 会：构建 bridge、注册 MCP、把 Skills 链到 `~/.agents/skills`。
-
-建议把 `bin/` 加进 PATH，以后直接用 `orch`：
+安装脚本会构建 bridge、注册 MCP、链接 Skills，并把 `orch` 加入 PATH。
 
 ```bash
-echo 'export PATH="'"$PWD"'/bin:$PATH"' >> ~/.zshrc && source ~/.zshrc
+orch workspace ~/Projects/YourApp
+cd ~/Projects/YourApp
+orch
+```
+
+若提示找不到 `orch`：
+
+```bash
+export PATH="$HOME/Desktop/codex-opencode-orchestrator/bin:$PATH"  # 改为实际路径
+command -v orch && orch help
 ```
 
 ---
 
-## 2. 绑定业务仓
+## orch 常用入口
 
-```bash
-bash scripts/set-workspace.sh ~/Projects/YourApp
-orch workspace                  # bound: true
-```
+| 命令 | 说明 |
+|------|------|
+| `orch workspace [路径]` | 绑定或查看业务仓 |
+| `orch` | 打开本仓 Codex 会话 |
+| `orch resume` / `orch sessions` | 恢复 / 列出会话 |
+| `orch use` / `orch use <名>` | 查看或切换 API/模型 |
+| `orch poll start\|stop` | 计划变更轮询 |
+| `orch doctor` | 自检 |
 
-之后：
+完整子命令与示例见 [ORCH.md](./ORCH.md)。
 
-- 代码改动只发生在该目录  
-- Plan 路径：`{业务仓}/.orchestrator/plans/<任务>.md`
+绑定后业务仓下会有 `.orchestrator/plans|briefs|runs/`。
 
 ---
 
-## 3. 日常工作流
+## 日常工作流（Codex Skills）
 
 ```bash
 cd ~/Projects/YourApp
-orch                            # 新开 Codex（自动绑定当前目录）
+orch
 ```
 
-对话里（输入 `$` 选 Skill，**不要**用 Codex 自带的 `/plan`）：
-
-1. `$opencode-plan` — 写计划并落盘  
-2. `$opencode-dispatch` — 派工  
-3. `$opencode-supervise` — 查一次进度  
-4. `$opencode-review` — 验收  
+在对话中输入 `$`（不要使用 Codex 内置 `/plan`）：
 
 | Skill | 作用 |
 |-------|------|
-| `$opencode-plan` | 写 plan |
+| `$opencode-plan` | 写 plan（步骤用 `- [ ]`） |
 | `$opencode-dispatch` | 派工 |
-| `$opencode-supervise` | 单次查进度 |
-| `$opencode-poll` | 开始轮询 |
-| `$opencode-poll-cancel` | 取消轮询 |
-| `$opencode-review` | 终验 |
+| `$opencode-supervise` | 查进度 |
+| `$opencode-ask-user` | 需要用户输入时提问 |
+| `$opencode-poll` / `$opencode-poll-cancel` | 开始 / 取消轮询 |
+| `$opencode-review` | 终验；通过后 `mark_complete` |
+
+OpenCode 只负责把 phase 勾成 `- [x]`；任务是否完成只能由 Codex 调用 `mark_complete`。`awaiting_review` 或 idle 不等于完成。
+
+需要 Cookie、验证码等时走 `$opencode-ask-user`；keepAlive 场景用 `orch provide-reply` 与 `orch bridge resume`，不要用会中断会话的 `rework`。
 
 ---
 
-## 4. 会话：下次怎么回来
+## 接入 OpenCode
 
-会话按 **业务仓目录** 过滤：
+1. 在 `.env` 填写 API Key（参考 `.env.example`）  
+2. 在 `opencode.json` 注册 provider/models，用 `orch use` 选择 profile  
+3. 若无 OpenCode CLI：`bash scripts/setup-opencode.sh`  
+4. `$opencode-dispatch` 成功时 `executorType` 应为 `opencode-http`  
 
-```bash
-cd ~/Projects/YourApp
-orch sessions              # 只看本仓
-orch resume                # 最近一条
-orch resume 1              # 列表第 1 条
-orch session pin 我的任务   # 起别名
-orch resume 我的任务
-```
-
-新开会话仍用 `orch`；退出后会自动记下本仓「最近会话」。
+本地调试可用 `orch use mock`。不要提交 `.env` 与 `config/active.local.yaml`。
 
 ---
 
-## 5. 轮询（只要两个命令）
-
-```bash
-orch poll start --interval 60    # 或对话里 $opencode-poll
-orch poll stop                   # 或 $opencode-poll-cancel
-```
-
-逻辑：每隔 N 秒看 `.orchestrator/plans/` **有没有改文件**。  
-没改 → 不调模型；改了 → 唤醒启动时绑定的那条会话去查进度。
-
-可显式指定会话：`orch poll start --interval 60 --session <uuid>`。
-
-说明：唤醒是给该会话 **追加一轮**（resume），不是往正在开着的输入框里打字。
-
----
-
-## 6. 接真 OpenCode（可选）
-
-默认是 **mock**，不用 Key。要真跑时：
-
-1. 编辑 `.env`，填入 `SILICONFLOW_API_KEY`  
-2. `config/orchestrator.yaml` 里改 `default_executor`（见 `config/executors.yaml`）  
-3. 按需：`bash scripts/setup-opencode.sh`  
-4. 再 `$opencode-dispatch`
-
-不要提交 `.env`。
-
----
-
-## 7. 常见问题
+## 常见问题
 
 | 现象 | 处理 |
 |------|------|
-| 派工/写 plan 报未绑定 | `set-workspace.sh` / `orch workspace` |
-| 没有 `$opencode-*` | 重跑 `install.sh`；对话里输入 `$` |
-| `/plan` 不对劲 | 那是 Codex 内置 Plan mode；用 `$opencode-plan` |
-| 找不到 `codex` | 装 CLI，或让 `install.sh` 用桌面端自带路径 |
-| `doctor` 失败 | 按提示重跑 `install.sh` |
-
-维护者本地配置备份恢复：`bash scripts/restore-local-backup.sh`。
+| 找不到 `orch` | 检查 PATH，见上文安装一节 |
+| 未绑定 | `orch workspace ~/项目` |
+| 没有 `$opencode-*` | 重跑 `orch install`，对话中输入 `$` |
+| `/plan` 行为不对 | 使用 `$opencode-plan` |
+| 找不到 `codex` | 安装 CLI，或由 install 使用桌面端路径 |
+| `doctor` 失败 | 按提示执行 `orch install` |
+| 换模型后丢上下文 | 同商家用 `orch use`；跨商家无法保留会话 |

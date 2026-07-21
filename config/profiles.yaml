@@ -1,0 +1,24 @@
+# 用 orch use <名> 切换（写入 config/active.local.yaml，勿提交）
+# 同商家换模型：有进行中 OpenCode 会话时会尽量保留上下文
+# model 格式: providerId/modelId（须已在 opencode.json 注册）
+
+default: ikuncode-haiku
+
+profiles:
+  # --- 同一商家，不同模型 ---
+  ikuncode-haiku:
+    model: ikuncode/claude-haiku-4-5-20251001
+    note: IKunCode · Haiku（默认，便宜）
+
+  ikuncode-sonnet:
+    model: ikuncode/claude-sonnet-4-5-20250929
+    note: IKunCode · Sonnet（更强）
+
+  # --- 换商家（需对应 .env Key）---
+  siliconflow-v3:
+    model: siliconflow/deepseek-ai/DeepSeek-V3
+    note: SiliconFlow · DeepSeek V3
+
+  mock:
+    type: mock
+    note: 不调真实 API（冒烟）

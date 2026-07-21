@@ -1,48 +1,61 @@
 # Codex ↔ OpenCode Orchestrator
 
-**Codex** 负责规划与监督，**OpenCode** 在业务项目里改代码。
+Codex 负责规划与监督；OpenCode 在业务项目中改代码。日常入口为命令行工具 `orch`。
 
-## 5 分钟上手
+## 上手
 
 ```bash
 git clone https://github.com/mkbk-with-circle/codex-opencode-orchestrator.git
 cd codex-opencode-orchestrator
-bash scripts/install.sh --smoke          # 一次：装 bridge + 注册 MCP/Skills
-bash scripts/set-workspace.sh ~/你的项目  # 绑定业务仓（必做）
-
-# 可选：方便以后敲 orch
-echo 'export PATH="'"$PWD"'/bin:$PATH"' >> ~/.zshrc && source ~/.zshrc
-
-cd ~/你的项目
-orch                    # 或: bash …/scripts/codex-in-workspace.sh
+bash scripts/install.sh --smoke
 ```
 
-在 Codex 里用 **`$` Skills**（不要用内置 `/plan`）：
+安装脚本会把 `bin/` 写入 shell 配置。若当前终端找不到 `orch`：
 
-| 你要做的 | 输入 |
-|----------|------|
+```bash
+export PATH="$PWD/bin:$PATH"
+orch workspace ~/你的项目
+cd ~/你的项目
+orch
+```
+
+验证：`command -v orch`。也可将上述 PATH 写入 `~/.zshrc` / `~/.bashrc`。
+
+## Skills
+
+在 Codex 中输入 `$`（不要使用内置 `/plan`）：
+
+| 用途 | Skill |
+|------|-------|
 | 写计划 | `$opencode-plan` |
 | 派工 | `$opencode-dispatch` |
 | 看进度 | `$opencode-supervise` |
-| 验收 | `$opencode-review` |
-| 开始 / 取消轮询 | `$opencode-poll` / `$opencode-poll-cancel` |
+| 验收 | `$opencode-review` → `mark_complete` |
+| 需要凭据或决策 | `$opencode-ask-user` |
+| 轮询 | `$opencode-poll` / `$opencode-poll-cancel` |
 
-完整说明 → **[docs/USAGE.md](docs/USAGE.md)**  
-给模型看的规则 → [`AGENTS.md`](AGENTS.md)
+- 总览：[docs/USAGE.md](docs/USAGE.md)  
+- orch 命令：[docs/ORCH.md](docs/ORCH.md)  
+- 配置：[config/README.md](config/README.md)  
+- 模型规则：[AGENTS.md](AGENTS.md)
 
 ## 常用命令
 
 ```bash
-orch                  # 本业务仓开新会话
-orch resume           # 恢复本仓最近会话
-orch sessions         # 列出本仓会话
-orch poll start       # plan 变更才唤醒会话
+orch help
+orch workspace ~/项目
+orch
+orch resume
+orch sessions
+orch use
+orch use <profile>
+orch poll start
 orch poll stop
-orch doctor           # 健康检查
-orch workspace        # 看当前绑定
+orch doctor
 ```
 
 ## 默认与安全
 
-- 默认执行器是 **mock**（不用 API Key 也能冒烟）。真跑 OpenCode：改 `config/orchestrator.yaml`，并在 `.env` 填密钥。
-- 不要提交 `.env`。
+- 默认 profile：`ikuncode-haiku`（`orch use` 切换）。  
+- 在 `.env` 填写真实 API Key。  
+- 不要提交 `.env` 与 `config/active.local.yaml`。

@@ -3,15 +3,22 @@
  * CLI for smoke tests without MCP
  */
 import {
+  beginUserHoldTool,
   dispatch,
   getWorkspaceTool,
   interrupt,
   listPlansTool,
+  listProfilesTool,
+  markComplete,
   progress,
+  provideUserReplyTool,
+  resume,
   reviewContext,
   rework,
   setWorkspaceTool,
   status,
+  useProfileTool,
+  waitForUserReplyTool,
   writePlanTool,
 } from "./orchestrator.js";
 import { loadDotEnv } from "./config.js";
@@ -83,6 +90,19 @@ async function main() {
     case "status":
       console.log(JSON.stringify(await status(flag("--run")), null, 2));
       break;
+    case "mark-complete":
+      console.log(
+        JSON.stringify(
+          await markComplete({
+            runId: flag("--run"),
+            note: flag("--note"),
+            force: has("--force"),
+          }),
+          null,
+          2,
+        ),
+      );
+      break;
     case "interrupt":
       console.log(JSON.stringify(await interrupt(flag("--run")), null, 2));
       break;
@@ -99,9 +119,73 @@ async function main() {
         ),
       );
       break;
+    case "resume":
+      console.log(
+        JSON.stringify(
+          await resume({
+            runId: flag("--run"),
+            message:
+              flag("--message") ||
+              flag("--extra") ||
+              "Continue in the current live scene; do not restart the interaction.",
+            userReply: flag("--reply"),
+          }),
+          null,
+          2,
+        ),
+      );
+      break;
+    case "begin-hold":
+    case "begin-user-hold":
+      console.log(
+        JSON.stringify(
+          beginUserHoldTool({
+            kind: flag("--kind"),
+            keepAlive: has("--no-keepalive") ? false : undefined,
+            holdHint: flag("--hint"),
+            question: flag("--question"),
+            needWhat: flag("--need"),
+            runId: flag("--run"),
+          }),
+          null,
+          2,
+        ),
+      );
+      break;
+    case "provide-reply":
+    case "provide-user-reply":
+      {
+        const reply = flag("--reply") || flag("--text");
+        if (!reply) {
+          console.error("用法: provide-reply --reply '用户输入'");
+          process.exit(1);
+        }
+        console.log(
+          JSON.stringify(provideUserReplyTool({ reply }), null, 2),
+        );
+      }
+      break;
+    case "wait-reply":
+    case "wait-for-user-reply":
+      {
+        const timeoutSec = flag("--timeout")
+          ? Number(flag("--timeout"))
+          : undefined;
+        const out = await waitForUserReplyTool({ timeoutSec });
+        console.log(JSON.stringify(out, null, 2));
+        if (!out.ok) process.exit(2);
+      }
+      break;
     case "progress":
       console.log(
-        JSON.stringify(await progress({ runId: flag("--run") }), null, 2),
+        JSON.stringify(
+          await progress({
+            runId: flag("--run"),
+            prompt: flag("--prompt") || flag("--message"),
+          }),
+          null,
+          2,
+        ),
       );
       break;
     case "review":
@@ -109,9 +193,25 @@ async function main() {
         JSON.stringify(await reviewContext(flag("--run")), null, 2),
       );
       break;
+    case "use":
+    case "use-profile": {
+      const name =
+        flag("--profile") ||
+        rest.find((x) => !x.startsWith("--") && x !== "use" && x !== "use-profile");
+      if (!name || has("--list") || name === "list") {
+        console.log(JSON.stringify(listProfilesTool(), null, 2));
+        break;
+      }
+      console.log(JSON.stringify(await useProfileTool(name), null, 2));
+      break;
+    }
+    case "profiles":
+    case "list-profiles":
+      console.log(JSON.stringify(listProfilesTool(), null, 2));
+      break;
     default:
       console.error(
-        "用法: cli.ts <dispatch|workspace|set-workspace|write-plan|list-plans|status|interrupt|rework|progress|review>",
+        "用法: cli.ts <dispatch|workspace|…|use|profiles|wait-reply|…>",
       );
       process.exit(1);
   }

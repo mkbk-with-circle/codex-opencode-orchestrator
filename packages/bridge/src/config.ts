@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import yaml from "js-yaml";
-import type { ExecutorsFile, OrchestratorConfig } from "./types.js";
+import type { OrchestratorConfig } from "./types.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -45,9 +45,4 @@ export function loadOrchestratorConfig(root = repoRoot()): OrchestratorConfig {
   const p = path.join(root, "config/orchestrator.yaml");
   const raw = yaml.load(fs.readFileSync(p, "utf8")) as OrchestratorConfig;
   return raw;
-}
-
-export function loadExecutors(root = repoRoot()): ExecutorsFile {
-  const p = path.join(root, "config/executors.yaml");
-  return yaml.load(fs.readFileSync(p, "utf8")) as ExecutorsFile;
 }

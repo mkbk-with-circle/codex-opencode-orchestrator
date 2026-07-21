@@ -1,30 +1,40 @@
-# Orchestrator control-plane defaults
+# 编排器行为默认值（与 API/模型清单无关；切模型用 profiles.yaml + orch use）
 
+# 派工前是否需要确认（MCP confirmedToken）
 confirm_before_dispatch: true
 
-# Default executor id (must exist in executors.yaml)
-default_executor: mock
+# 未 orch use、且 profiles.yaml 也无 default 时的兜底 profile 名
+default_executor: ikuncode-haiku
 
-# When true, dispatch creates a git worktree under runs/<id>/worktree
+# 是否在业务仓 .orchestrator/runs/<id>/worktree 建 git worktree（外部业务仓通常跳过）
 use_worktree: true
 
-# Relative path used as the default workspace for demos ONLY.
-# Real projects: set TARGET_WORKSPACE via scripts/set-workspace.sh or dispatch.workspace
+# 仅演示用的相对默认目录名；真实项目请 set_workspace / orch workspace
 default_workspace: playground
 
+# 是否把每次派工 brief 写到业务仓 .orchestrator/briefs/
+# 也可用环境变量 ORCHESTRATOR_SAVE_BRIEFS=0 关闭
+save_briefs: true
+
+# 高风险操作需确认的门禁标签（预留）
 gates:
   require_confirm:
     - destructive_shell
     - mass_delete
 
-# Commands Codex / review skill may run for acceptance
+# 验收时可参考的命令（演示用 playground；真实任务以 plan 内验收为准）
 acceptance:
   commands:
     - "test -f playground/hello.txt"
     - "grep -q 'Hello' playground/hello.txt || true"
 
-# Future remote probe (not implemented in v1)
+# 远程执行预留（未实现）
 ssh_remote:
   enabled: false
-  host: ymy@162.105.87.147
-  note: "Phase 2 adapter; local OpenCode is primary for v1"
+  host: ""
+  note: "未启用"
+
+# Codex（大脑）侧默认模型；可用 CODEX_MODEL / CODEX_REASONING_EFFORT 覆盖
+codex:
+  model: gpt-5.6-luna
+  reasoning_effort: low
