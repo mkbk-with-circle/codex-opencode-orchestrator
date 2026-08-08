@@ -665,12 +665,17 @@ export async function rework(args: {
   extraInstructions: string;
   confirm?: boolean;
 }): Promise<Record<string, unknown>> {
-  requireBoundWorkspace();
+  const bound = requireBoundWorkspace();
+  const previous = args.runId
+    ? readState(args.runId, bound.absPath)
+    : findActiveRun(bound.absPath) || latestRun(bound.absPath);
+  if (!previous) return { ok: false, message: "No run to rework" };
   await interrupt(args.runId);
   return dispatch({
+    planPath: previous.planPath,
     extraInstructions: args.extraInstructions,
     confirm: args.confirm ?? false,
-    executorId: undefined,
+    executorId: previous.executorId,
   });
 }
 

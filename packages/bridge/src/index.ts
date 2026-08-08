@@ -25,6 +25,7 @@ import {
   writePlanTool,
 } from "./orchestrator.js";
 import { loadDotEnv, repoRoot } from "./config.js";
+import { callV2Tool, isV2Tool, v2ToolDefinitions } from "./v2/api.js";
 
 loadDotEnv();
 
@@ -35,6 +36,7 @@ const server = new Server(
 
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: [
+    ...v2ToolDefinitions,
     {
       name: "get_workspace",
       description:
@@ -378,7 +380,8 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
         result = { root: repoRoot() };
         break;
       default:
-        throw new Error(`Unknown tool: ${name}`);
+        if (isV2Tool(name)) result = await callV2Tool(name, args);
+        else throw new Error(`Unknown tool: ${name}`);
     }
     return {
       content: [{ type: "text", text: JSON.stringify(result, null, 2) }],

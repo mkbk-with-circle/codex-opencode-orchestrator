@@ -1,4 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
+import { randomBytes } from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
 import type {
   ExecutorActivity,
   ExecutorAdapter,
@@ -6,6 +9,7 @@ import type {
   RunState,
   StartResult,
 } from "../types.js";
+import { repoRoot } from "../config.js";
 
 let serveProc: ChildProcess | null = null;
 
@@ -18,10 +22,49 @@ function baseUrl(options: Record<string, unknown>): string {
   );
 }
 
-function authHeaders(): Record<string, string> {
-  const password = process.env.OPENCODE_SERVER_PASSWORD;
+type LocalServerAuth = { username: string; password: string };
+
+function localAuthPath(): string {
+  return path.join(repoRoot(), ".orchestrator", "opencode-server-auth.json");
+}
+
+function isLoopback(url: string): boolean {
+  const host = new URL(url).hostname;
+  return host === "127.0.0.1" || host === "localhost" || host === "::1";
+}
+
+function readLocalServerAuth(): LocalServerAuth | null {
+  try {
+    const value = JSON.parse(fs.readFileSync(localAuthPath(), "utf8")) as LocalServerAuth;
+    return value.username && value.password ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function ensureLocalServerAuth(url: string): LocalServerAuth | null {
+  if (!isLoopback(url)) return null;
+  if (process.env.OPENCODE_SERVER_PASSWORD) {
+    return {
+      username: process.env.OPENCODE_SERVER_USERNAME || "opencode",
+      password: process.env.OPENCODE_SERVER_PASSWORD,
+    };
+  }
+  const existing = readLocalServerAuth();
+  if (existing) return existing;
+  const value = { username: "opencode", password: randomBytes(32).toString("base64url") };
+  const file = localAuthPath();
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
+  fs.chmodSync(file, 0o600);
+  return value;
+}
+
+function authHeaders(url: string): Record<string, string> {
+  const local = isLoopback(url) ? readLocalServerAuth() : null;
+  const password = process.env.OPENCODE_SERVER_PASSWORD || local?.password;
   if (!password) return {};
-  const user = process.env.OPENCODE_SERVER_USERNAME || "opencode";
+  const user = process.env.OPENCODE_SERVER_USERNAME || local?.username || "opencode";
   const token = Buffer.from(`${user}:${password}`).toString("base64");
   return { Authorization: `Basic ${token}` };
 }
@@ -37,29 +80,52 @@ async function httpJson(
   url: string,
   init?: RequestInit,
 ): Promise<{ ok: boolean; status: number; json: unknown; text: string }> {
-  const res = await fetch(url, {
-    ...init,
-    headers: {
-      "Content-Type": "application/json",
-      ...authHeaders(),
-      ...(init?.headers || {}),
-    },
-  });
-  const text = await res.text();
-  let json: unknown = null;
-  try {
-    json = text ? JSON.parse(text) : null;
-  } catch {
-    json = null;
+  const timeoutMs = Math.max(1_000, Number(process.env.OPENCODE_HTTP_TIMEOUT_MS || 30_000));
+  const attempts = !init?.method || init.method === "GET" ? 2 : 1;
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      const res = await fetch(url, {
+        ...init,
+        signal: init?.signal || AbortSignal.timeout(timeoutMs),
+        headers: {
+          "Content-Type": "application/json",
+          ...authHeaders(url),
+          ...(init?.headers || {}),
+        },
+      });
+      const text = await res.text();
+      let json: unknown = null;
+      try {
+        json = text ? JSON.parse(text) : null;
+      } catch {
+        json = null;
+      }
+      if (res.status >= 500 && attempt < attempts) {
+        await new Promise((resolve) => setTimeout(resolve, 250 * attempt));
+        continue;
+      }
+      return { ok: res.ok, status: res.status, json, text };
+    } catch (error) {
+      lastError = error;
+      if (attempt < attempts) {
+        await new Promise((resolve) => setTimeout(resolve, 250 * attempt));
+        continue;
+      }
+    }
   }
-  return { ok: res.ok, status: res.status, json, text };
+  const detail = lastError instanceof Error ? lastError.message : String(lastError);
+  throw new Error(`opencode_http_unreachable: ${url}: ${detail}`);
 }
 
 async function ensureServe(options: Record<string, unknown>): Promise<void> {
   const url = baseUrl(options);
   try {
     const health = await httpJson(`${url}/global/health`);
-    if (health.ok) return;
+    if (health.ok) {
+      await ensureReporter(url);
+      return;
+    }
   } catch {
     // not up
   }
@@ -70,27 +136,72 @@ async function ensureServe(options: Record<string, unknown>): Promise<void> {
   }
   if (serveProc && !serveProc.killed) return;
   const port = Number(options.servePort || 4096);
+  const root = repoRoot();
+  const localAuth = ensureLocalServerAuth(url);
   const env = {
     ...process.env,
+    ORCHESTRATOR_ROOT: root,
+    OPENCODE_CONFIG: path.join(root, "opencode.json"),
+    ...(localAuth ? {
+      OPENCODE_SERVER_USERNAME: localAuth.username,
+      OPENCODE_SERVER_PASSWORD: localAuth.password,
+    } : {}),
     PATH: `${process.env.HOME}/.opencode/bin:${process.env.PATH || ""}`,
   };
-  serveProc = spawn("opencode", ["serve", "--port", String(port), "--hostname", "127.0.0.1"], {
+  const executable = String(options.opencodeBin || process.env.OPENCODE_BIN || "opencode");
+  serveProc = spawn(executable, ["serve", "--port", String(port), "--hostname", "127.0.0.1"], {
     stdio: "ignore",
     detached: true,
     env,
-    cwd: process.env.ORCHESTRATOR_ROOT || undefined,
+    cwd: root,
   });
   serveProc.unref();
   for (let i = 0; i < 30; i++) {
     await new Promise((r) => setTimeout(r, 500));
     try {
       const health = await httpJson(`${url}/global/health`);
-      if (health.ok) return;
+      if (health.ok) {
+        await ensureReporter(url);
+        return;
+      }
     } catch {
       // retry
     }
   }
   throw new Error(`Timed out waiting for opencode serve on ${url}`);
+}
+
+function reporterConnected(value: unknown): boolean {
+  if (!value || typeof value !== "object") return false;
+  const entry = (value as Record<string, unknown>).orchestrator_reporter;
+  if (!entry || typeof entry !== "object") return false;
+  const status = String((entry as Record<string, unknown>).status || "").toLowerCase();
+  return ["connected", "ready", "running"].includes(status);
+}
+
+async function ensureReporter(url: string): Promise<void> {
+  const current = await httpJson(`${url}/mcp`);
+  if (current.ok && reporterConnected(current.json)) return;
+  const script = `${repoRoot()}/scripts/mcp-executor.sh`;
+  const added = await httpJson(`${url}/mcp`, {
+    method: "POST",
+    body: JSON.stringify({
+      name: "orchestrator_reporter",
+      config: {
+        type: "local",
+        command: ["bash", script],
+        enabled: true,
+        timeout: 3_600_000,
+      },
+    }),
+  });
+  if (!added.ok) throw new Error(`opencode_reporter_setup_failed: ${added.status} ${added.text}`);
+  for (let attempt = 0; attempt < 20; attempt++) {
+    const status = await httpJson(`${url}/mcp`);
+    if (status.ok && reporterConnected(status.json)) return;
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  throw new Error("opencode_reporter_unavailable: check scripts/mcp-executor.sh and OpenCode MCP logs");
 }
 
 export class OpenCodeHttpExecutor implements ExecutorAdapter {
@@ -327,6 +438,7 @@ export class OpenCodeHttpExecutor implements ExecutorAdapter {
     prompt?: string;
     model?: string;
   }): Promise<{ progress: string }> {
+    await ensureServe(args.options);
     const url = baseUrl(args.options);
     const sid = args.run.sessionId;
     if (!sid) return { progress: "missing sessionId" };

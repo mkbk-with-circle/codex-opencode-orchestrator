@@ -36,6 +36,62 @@ case "$CMD" in
     shift
     exec bash "$ROOT/scripts/poll.sh" "$@"
     ;;
+  watch)
+    shift
+    exec bash "$ROOT/scripts/supervisor-v2.sh" "$@"
+    ;;
+  plan)
+    shift
+    sub="${1:-validate}"; shift || true
+    case "$sub" in
+      validate) exec bash "$ROOT/bin/orch" bridge plan-validate "$@" ;;
+      approve) exec bash "$ROOT/bin/orch" bridge plan-approve "$@" ;;
+      migrate) exec bash "$ROOT/bin/orch" bridge plan-migrate "$@" ;;
+      *) echo "未知 plan 子命令: $sub（validate|approve|migrate）" >&2; exit 1 ;;
+    esac
+    ;;
+  run)
+    shift
+    sub="${1:-status}"; shift || true
+    case "$sub" in
+      start) exec bash "$ROOT/bin/orch" bridge run-start "$@" ;;
+      dispatch) exec bash "$ROOT/bin/orch" bridge run-dispatch "$@" ;;
+      model) exec bash "$ROOT/bin/orch" bridge run-model "$@" ;;
+      replace-session) exec bash "$ROOT/bin/orch" bridge run-replace-session "$@" ;;
+      status) exec bash "$ROOT/bin/orch" bridge run-status "$@" ;;
+      list) exec bash "$ROOT/bin/orch" bridge run-list "$@" ;;
+      poll) exec bash "$ROOT/bin/orch" bridge run-poll "$@" ;;
+      reply)
+        if [[ -t 0 ]]; then
+          printf '请输入凭据、验证码或回答（输入不会显示）：' >&2
+          IFS= read -r -s human_reply
+          printf '\n' >&2
+          printf '%s' "$human_reply" | bash "$ROOT/bin/orch" bridge human-reply-v2 "$@" --stdin
+          unset human_reply
+          exit 0
+        fi
+        exec bash "$ROOT/bin/orch" bridge human-reply-v2 "$@" --stdin
+        ;;
+      complete) exec bash "$ROOT/bin/orch" bridge run-complete "$@" ;;
+      pause) exec bash "$ROOT/bin/orch" bridge run-pause "$@" ;;
+      resume) exec bash "$ROOT/bin/orch" bridge run-resume "$@" ;;
+      cancel) exec bash "$ROOT/bin/orch" bridge run-cancel "$@" ;;
+      *) echo "未知 run 子命令: $sub（start|dispatch|model|replace-session|status|list|poll|reply|complete|pause|resume|cancel）" >&2; exit 1 ;;
+    esac
+    ;;
+  phase)
+    shift
+    sub="${1:-status}"; shift || true
+    case "$sub" in
+      start) exec bash "$ROOT/bin/orch" bridge phase-start "$@" ;;
+      report) exec bash "$ROOT/bin/orch" bridge phase-report "$@" ;;
+      review) exec bash "$ROOT/bin/orch" bridge phase-review "$@" ;;
+      retry) exec bash "$ROOT/bin/orch" bridge phase-retry "$@" ;;
+      acceptance) exec bash "$ROOT/bin/orch" bridge phase-acceptance "$@" ;;
+      status) exec bash "$ROOT/bin/orch" bridge run-status "$@" ;;
+      *) echo "未知 phase 子命令: $sub（start|report|review|retry|status）" >&2; exit 1 ;;
+    esac
+    ;;
   doctor)
     exec bash "$ROOT/scripts/doctor.sh"
     ;;
@@ -68,6 +124,17 @@ case "$CMD" in
     fi
     exec npx tsx src/cli.ts use "$@"
     ;;
+  model)
+    shift
+    sub="${1:-list}"; shift || true
+    case "$sub" in
+      add) exec bash "$ROOT/bin/orch" bridge model-add "$@" ;;
+      check) exec bash "$ROOT/bin/orch" bridge model-check "$@" ;;
+      list) exec bash "$ROOT/bin/orch" profiles ;;
+      use) exec bash "$ROOT/bin/orch" use "$@" ;;
+      *) echo "未知 model 子命令: $sub（add|check|list|use）" >&2; exit 1 ;;
+    esac
+    ;;
   bridge)
     shift
     cd "$ROOT/packages/bridge"
@@ -90,6 +157,9 @@ orch — Codex ↔ OpenCode Orchestrator
   orch exec "…"                非交互跑一轮 codex exec
 
 切换 API / 模型（名字来自 config/profiles.yaml）
+  orch model add ...           注册 OpenCode provider/model/profile
+  orch model check [profile]  检查模型和 API Key 环境变量
+  orch model list|use         列出或切换 OpenCode 模型
   orch use                     列出可选 profile，并显示当前选中
   orch use ikuncode-haiku      IKunCode · Haiku（便宜，默认）
   orch use ikuncode-sonnet     IKunCode · Sonnet（更强；同商家尽量保留上下文）
@@ -98,13 +168,17 @@ orch — Codex ↔ OpenCode Orchestrator
   orch profiles                同 orch use（仅列表）
 
 轮询 / 等人输入
+  orch watch start|stop|status  v2 事件 supervisor（推荐）
   orch poll start [--interval 60] [--session uuid]
   orch poll stop
   orch begin-hold [--kind otp] [--hint '…']
   orch wait-reply [--timeout 900]
-  orch provide-reply --reply '验证码或回答'
+  orch run reply --run <runId>   无回显投递凭据、验证码或回答
 
 控制面
+  orch plan validate|approve|migrate  v2 Plan 校验、冻结与 v1 迁移
+  orch run start|dispatch|status|poll|reply|pause|resume|cancel|complete
+  orch phase start|report|acceptance|review|retry
   orch bridge <子命令>         如 status / dispatch / resume / mark-complete
   orch doctor | install | smoke | help
 

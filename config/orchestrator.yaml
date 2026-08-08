@@ -33,8 +33,3 @@ ssh_remote:
   enabled: false
   host: ""
   note: "未启用"
-
-# Codex（大脑）侧默认模型；可用 CODEX_MODEL / CODEX_REASONING_EFFORT 覆盖
-codex:
-  model: gpt-5.6-luna
-  reasoning_effort: low

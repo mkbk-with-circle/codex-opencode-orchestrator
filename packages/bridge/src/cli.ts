@@ -23,6 +23,32 @@ import {
 } from "./orchestrator.js";
 import { loadDotEnv } from "./config.js";
 import fs from "node:fs";
+import {
+  acknowledgeSupervisorEventV2,
+  approvePlanV2Tool,
+  cancelRunV2,
+  completeRunV2,
+  dispatchWindowV2,
+  listRunsV2,
+  migratePlanV2Tool,
+  pendingSupervisorEventsV2,
+  pauseRunV2,
+  phaseReportV2,
+  phaseStartV2,
+  pollExecutorV2,
+  provideHumanReplyV2,
+  retryPhaseV2,
+  replaceRunSessionV2,
+  resumeRunV2,
+  runPhaseAcceptanceV2,
+  reviewContextV2,
+  reviewPhaseV2,
+  startRunV2,
+  statusV2,
+  switchRunModelV2,
+  validatePlanV2Tool,
+} from "./v2/service.js";
+import { checkOpenCodeProfile, configureOpenCodeProfile } from "./profiles.js";
 
 loadDotEnv();
 
@@ -33,8 +59,149 @@ async function main() {
     return i >= 0 ? rest[i + 1] : undefined;
   };
   const has = (name: string) => rest.includes(name);
+  const listFlag = (name: string) =>
+    (flag(name) || "").split("|").map((value) => value.trim()).filter(Boolean);
 
   switch (cmd) {
+    case "model-add":
+      console.log(JSON.stringify(configureOpenCodeProfile({
+        name: flag("--name") || "",
+        model: flag("--model") || "",
+        baseUrl: flag("--base-url"),
+        apiKeyEnv: flag("--api-key-env"),
+        npm: flag("--npm"),
+        note: flag("--note"),
+        activate: has("--activate"),
+      }), null, 2));
+      break;
+    case "model-check":
+      console.log(JSON.stringify(checkOpenCodeProfile(flag("--name") || rest.find((x) => !x.startsWith("--"))), null, 2));
+      break;
+    case "plan-validate":
+      console.log(JSON.stringify(validatePlanV2Tool({ planPath: flag("--plan") }), null, 2));
+      break;
+    case "plan-migrate":
+      console.log(JSON.stringify(migratePlanV2Tool({
+        planPath: flag("--plan"),
+        outputPath: flag("--output"),
+        inPlace: has("--in-place"),
+      }), null, 2));
+      break;
+    case "plan-approve":
+      console.log(JSON.stringify(approvePlanV2Tool({ planPath: flag("--plan") }), null, 2));
+      break;
+    case "run-start":
+      console.log(JSON.stringify(startRunV2({
+        planPath: flag("--plan"),
+        executorId: flag("--executor"),
+        mode: flag("--mode") as "strict" | "batch" | undefined,
+        batchSize: flag("--batch-size") ? Number(flag("--batch-size")) : undefined,
+      }), null, 2));
+      break;
+    case "run-dispatch":
+      console.log(JSON.stringify(await dispatchWindowV2({ runId: flag("--run") }), null, 2));
+      break;
+    case "run-model":
+      console.log(JSON.stringify(switchRunModelV2({
+        runId: flag("--run"),
+        executorId: flag("--executor") || flag("--profile") || "",
+      }), null, 2));
+      break;
+    case "run-replace-session":
+      console.log(JSON.stringify(await replaceRunSessionV2({
+        runId: flag("--run"),
+        reason: flag("--reason"),
+      }), null, 2));
+      break;
+    case "run-status":
+      console.log(JSON.stringify(statusV2({ runId: flag("--run") }), null, 2));
+      break;
+    case "run-list":
+      console.log(JSON.stringify(listRunsV2(), null, 2));
+      break;
+    case "run-poll":
+      console.log(JSON.stringify(await pollExecutorV2({ runId: flag("--run") }), null, 2));
+      break;
+    case "run-complete":
+      console.log(JSON.stringify(completeRunV2({ runId: flag("--run"), note: flag("--note") }), null, 2));
+      break;
+    case "run-pause":
+      console.log(JSON.stringify(pauseRunV2({ runId: flag("--run"), reason: flag("--reason") }), null, 2));
+      break;
+    case "run-resume":
+      console.log(JSON.stringify(resumeRunV2({ runId: flag("--run") }), null, 2));
+      break;
+    case "run-cancel":
+      console.log(JSON.stringify(await cancelRunV2({ runId: flag("--run"), reason: flag("--reason") }), null, 2));
+      break;
+    case "phase-start":
+      console.log(JSON.stringify(phaseStartV2({
+        runId: flag("--run"),
+        phaseId: flag("--phase") || "",
+      }), null, 2));
+      break;
+    case "phase-report":
+      console.log(JSON.stringify(phaseReportV2({
+        runId: flag("--run"),
+        phaseId: flag("--phase") || "",
+        outcome: (flag("--outcome") || "complete") as "complete" | "failed" | "blocked",
+        comment: flag("--comment"),
+        evidence: listFlag("--evidence"),
+        needUser: flag("--need-user"),
+        keepAlive: has("--keep-alive"),
+        holdKind: flag("--hold-kind"),
+      }), null, 2));
+      break;
+    case "phase-review":
+      console.log(JSON.stringify(reviewPhaseV2({
+        runId: flag("--run"),
+        verdict: {
+          verdict: (flag("--verdict") || "accept") as "accept" | "rework" | "needs_user",
+          phaseId: flag("--phase") || "",
+          summary: flag("--summary") || "",
+          evidence: listFlag("--evidence"),
+          gaps: listFlag("--gaps"),
+          nextInstruction: flag("--next"),
+        },
+      }), null, 2));
+      break;
+    case "phase-retry":
+      console.log(JSON.stringify(retryPhaseV2({
+        runId: flag("--run"),
+        phaseId: flag("--phase") || "",
+      }), null, 2));
+      break;
+    case "phase-acceptance":
+      console.log(JSON.stringify(runPhaseAcceptanceV2({
+        runId: flag("--run"),
+        phaseId: flag("--phase") || "",
+      }), null, 2));
+      break;
+    case "human-reply-v2":
+      {
+      const reply = has("--stdin") ? fs.readFileSync(0, "utf8").replace(/[\r\n]+$/, "") : flag("--reply") || "";
+      if (!reply) throw new Error("human_reply_empty");
+      console.log(JSON.stringify(provideHumanReplyV2({
+        runId: flag("--run"),
+        reply,
+      }), null, 2));
+      break;
+      }
+    case "review-context-v2":
+      console.log(JSON.stringify(reviewContextV2({
+        runId: flag("--run"),
+        phaseId: flag("--phase"),
+      }), null, 2));
+      break;
+    case "events-pending":
+      console.log(JSON.stringify(pendingSupervisorEventsV2({ runId: flag("--run") }), null, 2));
+      break;
+    case "events-ack":
+      console.log(JSON.stringify(acknowledgeSupervisorEventV2({
+        runId: flag("--run"),
+        seq: Number(flag("--seq")),
+      }), null, 2));
+      break;
     case "dispatch": {
       const out = await dispatch({
         executorId: flag("--executor"),
@@ -211,7 +378,7 @@ async function main() {
       break;
     default:
       console.error(
-        "用法: cli.ts <dispatch|workspace|…|use|profiles|wait-reply|…>",
+        "用法: cli.ts <plan-validate|plan-approve|run-start|run-dispatch|run-status|phase-start|phase-report|phase-review|…>",
       );
       process.exit(1);
   }
