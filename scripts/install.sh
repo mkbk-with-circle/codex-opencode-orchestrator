@@ -39,7 +39,6 @@ echo
 
 need_cmd node
 need_cmd npm
-need_cmd python3
 
 NODE_MAJOR="$(node -p "process.versions.node.split('.')[0]")"
 if [[ "$NODE_MAJOR" -lt 18 ]]; then
@@ -61,7 +60,7 @@ echo "== build bridge =="
 (
   cd "$ROOT/packages/bridge"
   npm install
-  npm run build
+  npm run check
 )
 
 # --- codex ---
@@ -172,7 +171,7 @@ echo
 echo "  orch workspace ~/Projects/YourApp   # 绑定业务仓"
 echo "  cd ~/Projects/YourApp && orch      # 开对话"
 echo "  orch resume                        # 下次恢复"
-echo "  orch poll start / orch poll stop"
+echo "  orch watch start / orch watch stop"
 echo "  orch doctor"
 echo
 echo "  说明: $ROOT/docs/USAGE.md"

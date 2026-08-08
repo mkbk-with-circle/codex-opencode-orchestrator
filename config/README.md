@@ -15,6 +15,32 @@ OpenCode 商家与模型、编排切换名、密钥分三处配置，职责不�
 
 ## 注册商家与模型
 
+推荐直接用 CLI，一条命令同时更新 `opencode.json` 和 `profiles.yaml`，只保存密钥环境变量名：
+
+```bash
+orch model add \
+  --name my-fast-model \
+  --model my-provider/model-id \
+  --base-url https://api.example.com/v1 \
+  --api-key-env MY_PROVIDER_API_KEY \
+  --note '日常快速模型' \
+  --activate
+
+orch model check my-fast-model
+orch model list
+orch model use my-fast-model
+```
+
+把真实 Key 写到 `~/.config/codex-opencode-orchestrator/secrets.env` 或本仓 `.env`：
+
+```bash
+MY_PROVIDER_API_KEY=...
+```
+
+命令不会接收或打印 Key。已有 provider 新增模型时可省略 `--base-url` 和 `--api-key-env`。
+
+也可以手工编辑：
+
 在 `opencode.json` 中增加 `provider` 块；同一商家下可在 `models` 中列出多个模型 id。
 
 ```json

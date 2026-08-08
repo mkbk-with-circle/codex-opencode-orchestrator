@@ -51,9 +51,10 @@ description: >
 Codex（你）标准动作：
 
 1. 问用户 → 收到答案  
-2. `provide_user_reply`（写入 `user-reply.md`，解锁 wait）  
-3. 若执行端未在 wait、只是 idle：再 `resume` 同会话提醒继续  
+2. v2 Run 使用 `provide_human_reply_v2`，它会校验 runId + phaseId + attempt、写入 `user-reply.md` 并重新授权原 Phase。
+3. 若执行端未在 wait、只是 idle：再 `dispatch_window_v2` 向同一 session 发送当前窗口；执行端正在 wait 时文件投递会直接解锁。
 4. **禁止** `rework` / 新 `dispatch` 来「投喂」答案（会毁掉 keepAlive 现场）
+5. 对 credentials / otp / 2fa / secret，executor 只会收到一次性文件路径：禁止 `read` / `cat` / 打印文件；只能把路径交给获准的目标程序，由目标程序消费后立即删除。
 
 ## 恢复执行
 
@@ -61,8 +62,8 @@ Codex（你）标准动作：
 
 适用：短信/OTP、网页登录、CLI 交互、sudo/SSH 确认、2FA、验证码、设备批准、流程中二选一等。
 
-1. `provide_user_reply`（`reply` = 用户原文）  
-2. 可选：`resume`（同 `runId`/`sessionId`），说明已写入 `user-reply.md`、禁止重启该交互  
+1. `provide_human_reply_v2`（`reply` = 用户原文，显式传 runId）
+2. 必要时 `dispatch_window_v2`，但必须复用 state 中同一个 sessionId并说明禁止重启该交互
 3. **不要** `interrupt` / `rework`
 
 ### B. keepAlive = false（仅静态凭据，无活现场）

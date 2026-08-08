@@ -23,11 +23,39 @@ else
 fi
 
 # Bridge build
-if [[ -f "$ROOT/packages/bridge/dist/index.js" && -f "$ROOT/packages/bridge/dist/cli.js" ]]; then
+if [[ -f "$ROOT/packages/bridge/dist/index.js" && -f "$ROOT/packages/bridge/dist/executor-index.js" && -f "$ROOT/packages/bridge/dist/cli.js" ]]; then
   ok "bridge dist 已构建"
 else
   bad "bridge 未构建 → cd packages/bridge && npm i && npm run build"
 fi
+
+# v2 unit/integration tests
+if (cd "$ROOT/packages/bridge" && npm test >/dev/null 2>&1); then
+  ok "v2 tests"
+else
+  bad "v2 tests 失败 → cd packages/bridge && npm test"
+fi
+
+# OpenCode (only required for real executor runs)
+if [[ -n "${OPENCODE_BIN:-}" && -x "${OPENCODE_BIN}" ]]; then
+  ok "opencode $(${OPENCODE_BIN} --version 2>/dev/null | head -1) @ $OPENCODE_BIN"
+elif [[ -n "${OPENCODE_BIN:-}" ]]; then
+  bad "OPENCODE_BIN 不可执行: $OPENCODE_BIN"
+elif command -v opencode >/dev/null 2>&1; then
+  ok "opencode $(opencode --version 2>/dev/null | head -1)"
+elif [[ -x "$HOME/.opencode/bin/opencode" ]]; then
+  ok "opencode $($HOME/.opencode/bin/opencode --version 2>/dev/null | head -1) @ ~/.opencode/bin"
+else
+  warn "未找到 OpenCode CLI（mock 可用；真实 Run 前执行 scripts/setup-opencode.sh）"
+fi
+
+for script in supervisor-v2.sh supervisor-v2-daemon.sh mcp-executor.sh; do
+  if [[ -f "$ROOT/scripts/$script" ]] && bash -n "$ROOT/scripts/$script"; then
+    ok "$script"
+  else
+    bad "$script 缺失或语法错误"
+  fi
+done
 
 # .env
 if [[ -f "$ROOT/.env" ]]; then
@@ -70,12 +98,25 @@ done
 
 # Workspace
 WS_JSON="$(bridge_cli "$ROOT" workspace 2>/dev/null || echo '{}')"
-TW="$(echo "$WS_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('targetWorkspace') or d.get('workspace') or '')" 2>/dev/null || true)"
-SRC="$(echo "$WS_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('source') or '')" 2>/dev/null || true)"
+TW="$(node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{const x=JSON.parse(s);process.stdout.write(x.targetWorkspace||x.workspace||"")}catch{}})' <<<"$WS_JSON")"
+SRC="$(node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{process.stdout.write(JSON.parse(s).source||"")}catch{}})' <<<"$WS_JSON")"
 if [[ -n "$TW" ]]; then
   ok "target workspace: $TW (source=$SRC)"
+  if [[ -d "$TW/.git" ]]; then
+    ok "target workspace 是 Git root"
+  else
+    warn "v2 Run 需要 Git root；执行前在目标目录运行 git init"
+  fi
 else
   warn "尚未 set-workspace（默认 playground 演示）"
+fi
+
+MODEL_CHECK="$(bridge_cli "$ROOT" model-check 2>/dev/null || true)"
+MODEL_OK="$(node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{if(JSON.parse(s).ok)process.stdout.write("yes")}catch{}})' <<<"$MODEL_CHECK")"
+if [[ "$MODEL_OK" == "yes" ]]; then
+  ok "active OpenCode model/profile ready"
+else
+  warn "active OpenCode model/profile 未就绪 → orch model check"
 fi
 
 # install marker

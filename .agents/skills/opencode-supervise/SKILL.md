@@ -1,45 +1,17 @@
 ---
 name: opencode-supervise
 description: >
-  Supervise an active run via MCP status/progress/interrupt/rework.
-  Requires bound workspace (enforced by bridge). Use for $opencode-supervise.
-  OpenCode only owns phase checkboxes; Codex owns final completion.
-  If needs-user is open, stop and ask the human first.
+  监督 v2 Run、Phase、OpenCode heartbeat 和事件；处理暂停、重试、取消与人工门禁。
 ---
 
-# OpenCode Supervise
+# OpenCode Supervise v2
 
-先 `get_workspace`：未绑定则只引导 `set_workspace`。
-
-## 优先：人类门禁
-
-若 `{绑定仓}/.orchestrator/needs-user.md` 存在且 `status: open`：
-
-→ **立刻**按 `$opencode-ask-user` 处理：停止推进，只向用户提问。  
-不要 status 空转、不要 rework、不要 mark_complete。  
-用户给出验证码/选项后：用 **`provide_user_reply`**（+ 必要时 **`resume`**），**禁止** `rework`。
-
-| User intent | Tool |
-|-------------|------|
-| status | `status`（含 `phases` 勾选统计） |
-| 投喂用户输入（keepAlive） | `provide_user_reply` → 可选 `resume` |
-| progress | `progress` |
-| interrupt | `interrupt` |
-| rework | `rework`（会杀会话；keepAlive 场景禁用） |
-
-## 完成权
-
-- **OpenCode**：只能把 plan 里各 phase 从 `- [ ]` 改成 `- [x]`。  
-- **Codex**：判断整体任务是否达标；通过后调用 `mark_complete`。  
-- `status=awaiting_review` / OpenCode idle **≠** 任务完成。  
-- `status=completed` **只**能来自 Codex 的 `mark_complete`。
-
-## 读进度
-
-1. `status` → 看 `run.status`、`poll.activity`、`phases`  
-2. 打开 plan，核对 `## 步骤` 下 `- [x]` / `- [ ]`  
-3. 向用户列出：已完成 / 未完成步骤原文  
-
-若 `awaiting_review`：继续 `$opencode-review`，PASS 后 `mark_complete`；FAIL 则 `rework`。
-
-Summarize briefly. 未绑定会直接报错（程序强制）。
+1. `get_workspace` 必须 bound=true，然后调用 `status_v2`。
+2. 若 hold open，立即走 `$opencode-ask-user`；不要派工、重试或完成 Run。
+3. `poll_executor_v2` 只表示活动/心跳。OpenCode idle 不表示 implemented 或 accepted。
+4. `phase.implemented` → `$opencode-review`。
+5. `phase.attempt_failed` / `review_failed` → Codex 分析缺口；可修复时 `retry_phase`，再 `dispatch_window_v2`。
+6. `phase.blocked` → 问用户；收到回答后 `provide_human_reply_v2`，保持同一 OpenCode 现场。
+7. 用户要求暂停/恢复/取消时使用 `pause_run_v2` / `resume_run_v2` / `cancel_run_v2`。
+8. executor 持续卡死且没有 open hold 时，可用 `replace_run_session_v2` 保留 Run/Phase/文件状态并更换会话；有 keepAlive 现场时禁止更换。
+9. 不得依赖“最近一次 run”处理多个 Run；已知时始终显式传 runId。

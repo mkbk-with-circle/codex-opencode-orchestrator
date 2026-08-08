@@ -1,5 +1,7 @@
 # 使用说明
 
+> v2 是默认工作流。旧 `dispatch/status/review` 仅用于兼容已有 Run。
+
 ```text
 编排仓（本仓库）  → Skills / MCP / orch / 配置
 业务仓（你的项目）→ 代码与 plan / brief / runs
@@ -48,7 +50,7 @@ command -v orch && orch help
 | `orch` | 打开本仓 Codex 会话 |
 | `orch resume` / `orch sessions` | 恢复 / 列出会话 |
 | `orch use` / `orch use <名>` | 查看或切换 API/模型 |
-| `orch poll start\|stop` | 计划变更轮询 |
+| `orch watch start\|stop\|status` | v2 事件 supervisor |
 | `orch doctor` | 自检 |
 
 完整子命令与示例见 [ORCH.md](./ORCH.md)。
@@ -73,11 +75,31 @@ orch
 | `$opencode-supervise` | 查进度 |
 | `$opencode-ask-user` | 需要用户输入时提问 |
 | `$opencode-poll` / `$opencode-poll-cancel` | 开始 / 取消轮询 |
-| `$opencode-review` | 终验；通过后 `mark_complete` |
+| `$opencode-review` | 逐 Phase 审查与最终完成门禁 |
 
-OpenCode 只负责把 phase 勾成 `- [x]`；任务是否完成只能由 Codex 调用 `mark_complete`。`awaiting_review` 或 idle 不等于完成。
+### v2 生命周期
 
-需要 Cookie、验证码等时走 `$opencode-ask-user`；keepAlive 场景用 `orch provide-reply` 与 `orch bridge resume`，不要用会中断会话的 `rework`。
+```text
+draft Plan → validate_plan_v2 → 用户确认 → approve_plan_v2
+→ start_run_v2 → dispatch_window_v2
+→ OpenCode phase_start / phase_report
+→ Codex review_context_v2 / review_phase
+→ 下一授权窗口 → complete_run_v2
+```
+
+`- [x]` 只代表 OpenCode 声明 implemented。Codex 审查失败时会取消勾选并保留 attempt 历史。默认 `strict`；用户显式选择时可用有限 `batch`。第一版不支持多个 OpenCode 会话并行写同一个工作区。
+
+需要 Cookie、验证码等时走 `$opencode-ask-user`；v2 keepAlive 场景让用户运行 `orch run reply --run <runId>` 无回显输入，并由执行器同会话继续，不要用会中断会话的 `rework`。
+
+### 事件 supervisor
+
+```bash
+orch watch start --run <runId> --session <专用Codex会话UUID> --interval 60
+orch watch status
+orch watch stop
+```
+
+Supervisor 按 `events.jsonl` 和 durable cursor 工作。推荐专用 Codex 会话，避免后台并发恢复用户正在操作的规划 TUI。
 
 ---
 

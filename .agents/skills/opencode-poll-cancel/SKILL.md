@@ -1,21 +1,12 @@
 ---
 name: opencode-poll-cancel
-description: >
-  取消 plan 变更轮询。用户说 $opencode-poll-cancel、停止轮询、poll stop、取消轮询时使用。
+description: 取消 v2 事件 supervisor。
 ---
 
-# 取消轮询
-
-执行：
+# 取消 supervisor
 
 ```bash
-bash "$ORCH/bin/orch" poll stop
+bash "$ORCH/bin/orch" watch stop
 ```
 
-或：
-
-```bash
-bash /path/to/codex-opencode-orchestrator/scripts/poll.sh stop
-```
-
-向用户确认已停止即可。
+停止后报告状态；不要中断 OpenCode run，除非用户另外要求取消 Run。

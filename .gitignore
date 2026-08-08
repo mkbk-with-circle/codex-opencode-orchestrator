@@ -8,6 +8,7 @@ config/active.local.yaml
 # Local logs (opencode serve etc.)
 logs/**
 *.log
+runs/
 
 # Node
 node_modules/
@@ -23,5 +24,7 @@ packages/bridge/*.tsbuildinfo
 # OpenCode local cache (if any)
 .opencode/cache/
 
-# Per-workspace orchestrator artifacts (plans/briefs/runs/needs-user)
-**/.orchestrator/
+# Per-workspace orchestrator runtime artifacts. Plan contracts are versionable.
+**/.orchestrator/*
+!**/.orchestrator/plans/
+!**/.orchestrator/plans/*.md

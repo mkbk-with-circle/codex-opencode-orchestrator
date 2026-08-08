@@ -33,9 +33,15 @@ GH="https://github.com/anomalyco/opencode/releases/download/${TAG}/${ASSET}"
 URL="${OPENCODE_DOWNLOAD_URL:-https://ghfast.top/${GH}}"
 
 TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
 echo "Downloading $URL ..."
-curl -fL --retry 3 --retry-delay 2 -o "$TMP/oc.zip" "$URL"
-unzip -o "$TMP/oc.zip" -d "$BIN_DIR"
+ARCHIVE="$TMP/$ASSET"
+curl -fL --retry 3 --retry-delay 2 -o "$ARCHIVE" "$URL"
+case "$ASSET" in
+  *.zip) unzip -o "$ARCHIVE" -d "$BIN_DIR" ;;
+  *.tar.gz|*.tgz) tar -xzf "$ARCHIVE" -C "$BIN_DIR" ;;
+  *) echo "Unsupported OpenCode archive: $ASSET" >&2; exit 1 ;;
+esac
 # zip may contain nested folder or bare binary
 if [[ -f "$BIN_DIR/opencode" ]]; then
   chmod +x "$BIN_DIR/opencode"

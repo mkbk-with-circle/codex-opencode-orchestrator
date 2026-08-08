@@ -21,13 +21,31 @@
 | `orch poll start` | 开始 plan / needs-user 变更轮询 |
 | `orch poll stop` | 停止轮询 |
 | `orch wait-reply` | 阻塞等待用户回复（keepAlive） |
-| `orch provide-reply` | 写入用户回复，结束 wait-reply |
+| `orch run reply --run <runId>` | 无回显写入 v2 Run 的一次性用户回复 |
 | `orch begin-hold` | 写入 needs-user.md / hold.json |
 | `orch bridge <子命令>` | 调用 bridge CLI（派工、状态、验收等） |
 | `orch doctor` | 检查安装、MCP、Skills |
 | `orch install […]` | 重新安装 |
 | `orch smoke` | mock 派工冒烟测试 |
 | `orch help` | 短帮助 |
+
+### v2 Plan / Run / Phase
+
+| 命令 | 作用 |
+|------|------|
+| `orch plan validate --plan <task>` | 校验 Plan |
+| `orch plan approve --plan <task>` | 用户确认后冻结契约 |
+| `orch run start --plan <task> [--mode strict\|batch]` | 创建 Run 和授权窗口 |
+| `orch run dispatch --run <id>` | 只把授权窗口交给 OpenCode |
+| `orch run status --run <id>` | 查看完整性、Phase 和事件 |
+| `orch run pause\|resume\|cancel --run <id>` | 控制 Run |
+| `orch phase start\|report ...` | OpenCode 受控上报接口 |
+| `orch phase acceptance --run <id> --phase P01` | 执行阶段验收命令 |
+| `orch phase review ...` | Codex accept/rework/needs_user |
+| `orch run complete --run <id>` | 执行总体验收并完成 Run |
+| `orch watch start\|stop\|status` | v2 事件 supervisor |
+
+`phase start/report` 属于执行器报告面；`phase review` 和 `run complete` 属于 Codex 控制面。
 
 ---
 
@@ -103,8 +121,10 @@ orch wait-reply --timeout 900
 写入回复：
 
 ```bash
-orch provide-reply --reply '123456'
+orch run reply --run <runId>
 ```
+
+该命令在终端中无回显读取内容，并通过 stdin 交给编排器；不要把密码或验证码放进命令行参数。
 
 在同一 OpenCode 会话继续（不要使用会中断会话的 `rework`）：
 
