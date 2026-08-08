@@ -25,6 +25,9 @@ export type HoldMeta = {
   holdHint?: string;
   createdAt: string;
   runId?: string;
+  phaseId?: string;
+  attempt?: number;
+  sensitive?: boolean;
 };
 
 const DEFAULT_REPLY_REL = path.join(".orchestrator", "user-reply.md");
@@ -44,6 +47,14 @@ function ensureOrchDir(workspaceAbs: string): void {
   fs.mkdirSync(path.join(workspaceAbs, ".orchestrator"), { recursive: true });
 }
 
+function isSensitiveKind(kind: string): boolean {
+  return ["credentials", "otp", "2fa", "secret"].includes(kind);
+}
+
+function replyPathForHold(workspaceAbs: string, hold?: HoldMeta): string {
+  return path.join(workspaceAbs, hold?.replyFile || DEFAULT_REPLY_REL);
+}
+
 /** Clear previous reply and write a wait token so waiters ignore stale content. */
 export function beginUserHold(
   workspaceAbs: string,
@@ -54,6 +65,8 @@ export function beginUserHold(
     question?: string;
     needWhat?: string;
     runId?: string;
+    phaseId?: string;
+    attempt?: number;
   } = {},
 ): HoldMeta {
   ensureOrchDir(workspaceAbs);
@@ -67,12 +80,18 @@ export function beginUserHold(
     holdHint: args.holdHint,
     createdAt: new Date().toISOString(),
     runId: args.runId,
+    phaseId: args.phaseId,
+    attempt: args.attempt,
   };
+  meta.sensitive = isSensitiveKind(meta.kind);
+  if (meta.sensitive) meta.replyFile = path.join(".orchestrator", "secrets", `${meta.waitToken}.reply`);
+  const replyPath = replyPathForHold(workspaceAbs, meta);
+  fs.mkdirSync(path.dirname(replyPath), { recursive: true, mode: 0o700 });
 
   fs.writeFileSync(paths.hold, JSON.stringify(meta, null, 2) + "\n", "utf8");
   // Stale replies must not unblock a new wait
   fs.writeFileSync(
-    paths.userReply,
+    replyPath,
     [
       "---",
       `waitToken: ${meta.waitToken}`,
@@ -84,6 +103,8 @@ export function beginUserHold(
     ].join("\n"),
     "utf8",
   );
+  fs.chmodSync(paths.hold, 0o600);
+  fs.chmodSync(replyPath, 0o600);
 
   const body = [
     "---",
@@ -95,6 +116,8 @@ export function beginUserHold(
     args.holdHint ? `holdHint: ${JSON.stringify(args.holdHint)}` : null,
     `createdAt: ${meta.createdAt}`,
     meta.runId ? `runId: ${meta.runId}` : null,
+    meta.phaseId ? `phaseId: ${meta.phaseId}` : null,
+    meta.attempt !== undefined ? `attempt: ${meta.attempt}` : null,
     "---",
     "",
     "# 需要用户提供",
@@ -110,7 +133,7 @@ export function beginUserHold(
       ? [
           "- keepAlive: true — 执行端必须保持当前会话/进程/浏览器/CLI 现场，禁止重启该步骤",
           meta.holdHint ? `- holdHint: ${meta.holdHint}` : null,
-          `- 回复写入: \`${meta.replyFile}\`（由 Codex provide_user_reply / resume 写入）`,
+          `- 回复写入一次性 ${meta.sensitive ? "秘密" : "普通"}通道（由 Codex provide_user_reply 写入）`,
           "- 恢复：同会话 resume；禁止 rework/新 dispatch",
         ]
           .filter(Boolean)
@@ -122,6 +145,7 @@ export function beginUserHold(
     "",
   ].join("\n");
   fs.writeFileSync(paths.needsUser, body, "utf8");
+  fs.chmodSync(paths.needsUser, 0o600);
   return meta;
 }
 
@@ -133,14 +157,17 @@ export function provideUserReply(
   ensureOrchDir(workspaceAbs);
   const paths = orchestratorPaths(workspaceAbs);
   let waitToken: string | undefined;
+  let hold: HoldMeta | undefined;
   if (fs.existsSync(paths.hold)) {
     try {
-      const hold = JSON.parse(fs.readFileSync(paths.hold, "utf8")) as HoldMeta;
+      hold = JSON.parse(fs.readFileSync(paths.hold, "utf8")) as HoldMeta;
       waitToken = hold.waitToken;
     } catch {
       /* ignore */
     }
   }
+  const replyPath = replyPathForHold(workspaceAbs, hold);
+  fs.mkdirSync(path.dirname(replyPath), { recursive: true, mode: 0o700 });
   const text = reply.replace(/\s+$/, "") + "\n";
   const stamped = [
     "---",
@@ -153,7 +180,8 @@ export function provideUserReply(
   ]
     .filter((x) => x !== null)
     .join("\n");
-  fs.writeFileSync(paths.userReply, stamped, "utf8");
+  fs.writeFileSync(replyPath, stamped, "utf8");
+  fs.chmodSync(replyPath, 0o600);
 
   if (opts?.resolveNeedsUser !== false && fs.existsSync(paths.needsUser)) {
     const needs = fs.readFileSync(paths.needsUser, "utf8");
@@ -174,7 +202,7 @@ export function provideUserReply(
       /* ignore */
     }
   }
-  return { replyPath: paths.userReply, waitToken };
+  return { replyPath, waitToken };
 }
 
 function extractReplyBody(raw: string): string {
@@ -206,30 +234,38 @@ export async function waitForUserReply(
     pollMs?: number;
     /** Print reply body to stdout when ready (default true) */
     printBody?: boolean;
+    /** Return sensitive content to the caller. Executor MCP sets this false. */
+    exposeSensitive?: boolean;
   },
-): Promise<{ ok: boolean; reply?: string; replyPath: string; timedOut?: boolean }> {
+): Promise<{ ok: boolean; reply?: string; replyPath: string; timedOut?: boolean; consumed?: boolean }> {
   const paths = orchestratorPaths(workspaceAbs);
   ensureOrchDir(workspaceAbs);
   let expectedToken: string | undefined;
+  let hold: HoldMeta | undefined;
   if (fs.existsSync(paths.hold)) {
     try {
-      expectedToken = (JSON.parse(fs.readFileSync(paths.hold, "utf8")) as HoldMeta)
-        .waitToken;
+      hold = JSON.parse(fs.readFileSync(paths.hold, "utf8")) as HoldMeta;
+      expectedToken = hold.waitToken;
     } catch {
       /* ignore */
     }
   }
+  const replyPath = replyPathForHold(workspaceAbs, hold);
 
   const timeoutMs = opts?.timeoutMs ?? 15 * 60 * 1000;
   const pollMs = opts?.pollMs ?? 1000;
   const started = Date.now();
 
   while (Date.now() - started < timeoutMs) {
-    if (fs.existsSync(paths.userReply)) {
-      const raw = fs.readFileSync(paths.userReply, "utf8");
+    if (fs.existsSync(replyPath)) {
+      const raw = fs.readFileSync(replyPath, "utf8");
       if (replyIsReady(raw, expectedToken)) {
+        if (hold?.sensitive && opts?.exposeSensitive === false) {
+          return { ok: true, replyPath, consumed: false };
+        }
         const reply = extractReplyBody(raw);
-        return { ok: true, reply, replyPath: paths.userReply };
+        if (hold?.sensitive) fs.unlinkSync(replyPath);
+        return { ok: true, reply, replyPath, consumed: Boolean(hold?.sensitive) };
       }
     }
     await new Promise((r) => setTimeout(r, pollMs));
@@ -237,7 +273,7 @@ export async function waitForUserReply(
   return {
     ok: false,
     timedOut: true,
-    replyPath: paths.userReply,
+    replyPath,
   };
 }
 

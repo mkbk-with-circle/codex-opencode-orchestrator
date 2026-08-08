@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { repoRoot } from "./config.js";
+import { refreshFileLoadedEnv, repoRoot } from "./config.js";
 
 export type WorkspaceResolve = {
   /** Absolute path OpenCode will use as cwd */
@@ -156,6 +156,8 @@ export function setUserTargetWorkspace(absOrTilde: string): {
     `# OpenCode 默认目标工作目录（编排仓以外的真实项目）\nTARGET_WORKSPACE=${expanded}\n`,
     { mode: 0o600 },
   );
+  refreshFileLoadedEnv("TARGET_WORKSPACE", expanded);
+  refreshFileLoadedEnv("ORCHESTRATOR_TARGET_WORKSPACE", expanded);
   return { ok: true, path: expanded, configPath: cfg };
 }
 

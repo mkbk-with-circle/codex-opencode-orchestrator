@@ -4,6 +4,8 @@ import { fileURLToPath } from "node:url";
 import yaml from "js-yaml";
 import type { OrchestratorConfig } from "./types.js";
 
+const fileLoadedEnv = new Map<string, string>();
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 /** Repo root: packages/bridge/src -> ../../.. */
@@ -37,8 +39,24 @@ function loadEnvFile(envPath: string): void {
     ) {
       val = val.slice(1, -1);
     }
-    if (process.env[key] === undefined) process.env[key] = val;
+    if (process.env[key] === undefined) {
+      process.env[key] = val;
+      fileLoadedEnv.set(key, val);
+    }
   }
+}
+
+/**
+ * Update an environment value only when it was absent or injected by loadDotEnv.
+ * Explicit caller-provided environment variables always win.
+ */
+export function refreshFileLoadedEnv(key: string, value: string): boolean {
+  const current = process.env[key];
+  const loaded = fileLoadedEnv.get(key);
+  if (current !== undefined && current !== loaded) return false;
+  process.env[key] = value;
+  fileLoadedEnv.set(key, value);
+  return true;
 }
 
 export function loadOrchestratorConfig(root = repoRoot()): OrchestratorConfig {
