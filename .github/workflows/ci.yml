@@ -1,0 +1,35 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: packages/bridge
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: packages/bridge/package-lock.json
+      - run: npm ci
+      - run: npm run check
+      - run: npm audit --omit=dev --audit-level=moderate
+      - name: Shell syntax
+        working-directory: .
+        run: for file in scripts/*.sh scripts/lib/*.sh bin/*; do bash -n "$file"; done
+      - name: Safety smoke
+        working-directory: .
+        run: bash scripts/safety-smoke.sh
+      - name: Mock end-to-end
+        working-directory: .
+        run: bash scripts/e2e-v2-mock.sh

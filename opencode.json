@@ -23,7 +23,7 @@
       }
     }
   },
-  "model": "ikuncode/claude-sonnet-4-5-20250929",
+  "model": "ikuncode/claude-haiku-4-5-20251001",
   "permission": {
     "external_directory": "deny"
   },

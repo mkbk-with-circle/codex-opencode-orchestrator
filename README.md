@@ -25,6 +25,17 @@ orch doctor
 bash scripts/setup-opencode.sh
 ```
 
+脚本默认从 OpenCode 官方 GitHub Release 下载。自动化或生产安装建议同时固定版本与 SHA-256；使用镜像必须显式设置下载地址：
+
+```bash
+OPENCODE_VERSION=v1.18.3 \
+OPENCODE_SHA256=<官方归档的 sha256> \
+bash scripts/setup-opencode.sh
+
+# 仅在确实需要镜像时：
+OPENCODE_DOWNLOAD_URL=https://mirror.example/opencode.zip bash scripts/setup-opencode.sh
+```
+
 安装在自定义位置时，设置一次：
 
 ```bash
