@@ -35,6 +35,42 @@ need_cmd() {
   }
 }
 
+secure_state_dir() {
+  local dir="$1"
+  mkdir -p "$dir"
+  chmod 700 "$dir"
+}
+
+link_managed_path() {
+  local source="$1" target="$2"
+  if [[ -e "$target" && ! -L "$target" ]]; then
+    return 2
+  fi
+  [[ -L "$target" ]] && rm -- "$target"
+  ln -s "$source" "$target"
+}
+
+pid_matches_script() {
+  local pid="$1" expected="$2" command_line
+  [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+  [[ "$pid" -gt 1 ]] || return 1
+  kill -0 "$pid" 2>/dev/null || return 1
+  command_line="$(ps -p "$pid" -o command= 2>/dev/null || true)"
+  [[ -n "$command_line" && "$command_line" == *"$expected"* ]]
+}
+
+stop_managed_process() {
+  local pid="$1" expected="$2"
+  pid_matches_script "$pid" "$expected" || return 1
+  kill "$pid" 2>/dev/null || return 1
+  for _ in {1..20}; do
+    kill -0 "$pid" 2>/dev/null || return 0
+    sleep 0.1
+  done
+  pid_matches_script "$pid" "$expected" || return 0
+  kill -9 "$pid" 2>/dev/null || return 1
+}
+
 bridge_cli() {
   local root="$1"
   shift

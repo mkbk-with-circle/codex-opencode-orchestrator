@@ -61,11 +61,16 @@ function resolvePlan(planPath?: string): string {
 }
 
 function resolveRun(runId?: string, workspace?: string): RunStateV2 {
-  const root = workspace ? path.resolve(workspace) : requireBoundWorkspace().absPath;
+  const bound = requireBoundWorkspace();
   if (workspace && !path.isAbsolute(workspace)) throw new Error("workspace_must_be_absolute");
+  if (workspace && path.resolve(workspace) !== bound.absPath) {
+    throw new Error(`workspace_not_bound: ${path.resolve(workspace)}`);
+  }
+  const root = bound.absPath;
   if (!fs.existsSync(root) || !fs.statSync(root).isDirectory()) {
     throw new Error(`workspace_not_found: ${root}`);
   }
+  assertInsideBound(path.join(root, ".orchestrator", "runs"), { absPath: root }, "runsDir");
   const run = runId ? readRun(root, runId) : newestRun(root);
   if (!run) throw new Error("no_v2_runs");
   if (path.resolve(run.workspace) !== root) throw new Error("run_workspace_mismatch");
@@ -262,6 +267,7 @@ export function startRunV2(args: {
   if (!gitRoot || realGitRoot !== realWorkspace) {
     throw new Error(`workspace_must_be_git_root: ${bound.absPath}; run git init before starting a v2 Run`);
   }
+  assertInsideBound(bound.runsDir, bound, "runsDir");
   const planPath = resolvePlan(args.planPath);
   const plan = assertPlanIntegrity(planPath);
   if (path.resolve(plan.metadata.workspace) !== bound.absPath) {
@@ -550,8 +556,9 @@ export function phaseReportV2(args: {
   const runtime = run.phases[args.phaseId];
   const artifactDir = path.join(runDirectory(run.workspace, run.id), "artifacts");
   const artifactBase = `${args.phaseId}-attempt-${runtime?.attempt || 0}`;
-  fs.mkdirSync(artifactDir, { recursive: true });
-  atomicWrite(path.join(artifactDir, `${artifactBase}.diff`), `${gitOutput(run.workspace, ["diff", "--", "."])}\n`);
+  fs.mkdirSync(artifactDir, { recursive: true, mode: 0o700 });
+  fs.chmodSync(artifactDir, 0o700);
+  atomicWrite(path.join(artifactDir, `${artifactBase}.diff`), `${gitOutput(run.workspace, ["diff", "--", "."])}\n`, 0o600);
   atomicWriteJson(path.join(artifactDir, `${artifactBase}.json`), {
     phaseId: args.phaseId,
     attempt: runtime?.attempt || 0,
@@ -561,7 +568,7 @@ export function phaseReportV2(args: {
     changedPaths: pathsChangedSincePhaseStart(run, args.phaseId),
     workspaceDirtyPaths: changedPaths(run.workspace),
     capturedAt: new Date().toISOString(),
-  });
+  }, 0o600);
   const out = mutateRun<{ violation: string } | { phaseId: string; status: string }>(run.workspace, run.id, (current) => {
     if (!current.authorizedPhaseIds.includes(args.phaseId)) {
       return protocolViolation(current, args.phaseId, "phase_not_authorized");
@@ -791,7 +798,7 @@ export function completeRunV2(args: { runId?: string; note?: string }): Record<s
   if (acceptance.some((item) => !item.ok)) {
     throw new Error(`final_acceptance_failed: ${acceptance.filter((item) => !item.ok).map((item) => item.command).join(", ")}`);
   }
-  atomicWriteJson(path.join(runDirectory(run.workspace, run.id), "artifacts", "final-acceptance.json"), acceptance);
+  atomicWriteJson(path.join(runDirectory(run.workspace, run.id), "artifacts", "final-acceptance.json"), acceptance, 0o600);
   const out = mutateRun(run.workspace, run.id, (current) => {
     current.status = "completed";
     current.summary = args.note || "Codex final acceptance passed";
@@ -842,6 +849,7 @@ export function runPhaseAcceptanceV2(args: { runId?: string; phaseId: string }):
   atomicWriteJson(
     path.join(runDirectory(run.workspace, run.id), "artifacts", `${phase.id}-attempt-${run.phases[phase.id].attempt}-acceptance.json`),
     results,
+    0o600,
   );
   return { ok: results.every((item) => item.ok), runId: run.id, phaseId: phase.id, results };
 }

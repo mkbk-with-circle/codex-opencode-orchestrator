@@ -44,7 +44,15 @@ export function orchestratorPaths(workspaceAbs: string) {
 }
 
 function ensureOrchDir(workspaceAbs: string): void {
-  fs.mkdirSync(path.join(workspaceAbs, ".orchestrator"), { recursive: true });
+  const dir = path.join(workspaceAbs, ".orchestrator");
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const root = fs.realpathSync(workspaceAbs);
+  const realDir = fs.realpathSync(dir);
+  const prefix = root.endsWith(path.sep) ? root : root + path.sep;
+  if (realDir !== root && !realDir.startsWith(prefix)) {
+    throw new Error(`orchestrator_dir_escapes_workspace: ${realDir}`);
+  }
+  fs.chmodSync(dir, 0o700);
 }
 
 function isSensitiveKind(kind: string): boolean {

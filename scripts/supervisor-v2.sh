@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+umask 077
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck disable=SC1091
@@ -9,7 +10,7 @@ STATE_DIR="$HOME/.config/codex-opencode-orchestrator/supervisor"
 PID_FILE="$STATE_DIR/supervisor.pid"
 META_FILE="$STATE_DIR/supervisor.json"
 LOG_FILE="$STATE_DIR/supervisor.log"
-mkdir -p "$STATE_DIR"
+secure_state_dir "$STATE_DIR"
 
 latest_session_for_workspace() {
   node - "$1" <<'JS'
@@ -42,9 +43,10 @@ JS
 stop_supervisor() {
   if [[ -f "$PID_FILE" ]]; then
     pid="$(sed -n '1p' "$PID_FILE" 2>/dev/null || true)"
-    if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
-      kill "$pid" 2>/dev/null || true
+    if stop_managed_process "$pid" "$SCRIPT_DIR/supervisor-v2-daemon.sh"; then
       echo "已停止 v2 supervisor pid=$pid"
+    elif [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+      echo "拒绝停止 pid=$pid：它不是本项目的 supervisor 进程" >&2
     else
       echo "v2 supervisor 未运行"
     fi
@@ -82,10 +84,13 @@ start_supervisor() {
   stop_supervisor >/dev/null || true
   export SUPERVISOR_ROOT="$ROOT" SUPERVISOR_RUN_ID="$run_id" SUPERVISOR_SESSION_ID="$session_id"
   export SUPERVISOR_INTERVAL="$interval" SUPERVISOR_PID_FILE="$PID_FILE" SUPERVISOR_SCRIPT_DIR="$SCRIPT_DIR"
+  touch "$LOG_FILE"
+  chmod 600 "$LOG_FILE"
   nohup bash "$SCRIPT_DIR/supervisor-v2-daemon.sh" >>"$LOG_FILE" 2>&1 &
   pid=$!
   echo "$pid" >"$PID_FILE"
   node -e 'const [runId,workspace,sessionId,intervalSec,pid,log]=process.argv.slice(1);console.log(JSON.stringify({runId,workspace,sessionId,intervalSec:Number(intervalSec),pid:Number(pid),log},null,2))' "$run_id" "$workspace" "$session_id" "$interval" "$pid" "$LOG_FILE" >"$META_FILE"
+  chmod 600 "$PID_FILE" "$META_FILE"
   sed -n '1,120p' "$META_FILE"
 }
 
@@ -93,7 +98,7 @@ case "${1:-status}" in
   start) shift; start_supervisor "$@" ;;
   stop|cancel) stop_supervisor ;;
   status)
-    if [[ -f "$PID_FILE" ]] && pid="$(sed -n '1p' "$PID_FILE")" && [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+    if [[ -f "$PID_FILE" ]] && pid="$(sed -n '1p' "$PID_FILE")" && pid_matches_script "$pid" "$SCRIPT_DIR/supervisor-v2-daemon.sh"; then
       echo "running"; sed -n '1,120p' "$META_FILE"
     else
       echo "stopped"

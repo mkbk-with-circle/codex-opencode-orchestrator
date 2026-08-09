@@ -49,7 +49,7 @@ fi
 # --- .env ---
 if [[ ! -f "$ROOT/.env" ]]; then
   cp "$ROOT/.env.example" "$ROOT/.env"
-  echo "已创建 .env（从 .env.example）。按需填 SILICONFLOW_API_KEY。"
+  echo "已创建 .env（从 .env.example）。默认 profile 请填写 IKUNCODE_API_KEY。"
 else
   echo "保留已有 .env"
 fi
@@ -96,14 +96,24 @@ if [[ "$SKIP_SKILLS" -eq 0 ]]; then
   echo "== link skills → ~/.agents/skills =="
   SKILL_HOME="${HOME}/.agents/skills"
   mkdir -p "$SKILL_HOME"
+  skill_conflict=0
   for skill_dir in "$ROOT/.agents/skills"/*; do
     [[ -d "$skill_dir" ]] || continue
     name="$(basename "$skill_dir")"
     target="$SKILL_HOME/$name"
-    if [[ -e "$target" || -L "$target" ]]; then
-      rm -rf "$target"
+    if [[ -e "$target" && ! -L "$target" ]]; then
+      echo "拒绝覆盖已有技能目录: $target（请先手工备份或移走）" >&2
+      skill_conflict=1
     fi
-    ln -sfn "$skill_dir" "$target"
+  done
+  if [[ "$skill_conflict" -ne 0 ]]; then
+    exit 1
+  fi
+  for skill_dir in "$ROOT/.agents/skills"/*; do
+    [[ -d "$skill_dir" ]] || continue
+    name="$(basename "$skill_dir")"
+    target="$SKILL_HOME/$name"
+    link_managed_path "$skill_dir" "$target"
     echo "  linked $name → $target"
   done
 fi

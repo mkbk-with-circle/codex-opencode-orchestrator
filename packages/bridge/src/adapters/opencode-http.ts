@@ -305,6 +305,23 @@ export class OpenCodeHttpExecutor implements ExecutorAdapter {
     }
     const directory = resolveRunDirectory(args.run);
 
+    try {
+      const health = await httpJson(`${url}/global/health`);
+      if (!health.ok) {
+        return {
+          activity: "failed",
+          status: "failed",
+          summary: `OpenCode serve unhealthy: HTTP ${health.status}`,
+        };
+      }
+    } catch (error) {
+      return {
+        activity: "failed",
+        status: "failed",
+        summary: error instanceof Error ? error.message : String(error),
+      };
+    }
+
     let busy = false;
     try {
       const st = await httpJson(withDirectory(`${url}/session/status`, directory));

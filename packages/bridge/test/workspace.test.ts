@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
 import test from "node:test";
-import { setUserTargetWorkspace } from "../src/workspace.js";
+import { assertInsideBound, setUserTargetWorkspace } from "../src/workspace.js";
 import { tempWorkspace } from "./helpers.js";
 
 test("set_workspace updates absent in-process binding immediately", () => {
@@ -46,4 +48,15 @@ test("set_workspace does not overwrite explicit caller environment", () => {
     if (previousOrchTarget === undefined) delete process.env.ORCHESTRATOR_TARGET_WORKSPACE;
     else process.env.ORCHESTRATOR_TARGET_WORKSPACE = previousOrchTarget;
   }
+});
+
+test("bound paths cannot escape through a symlink", () => {
+  const workspace = tempWorkspace();
+  const outside = tempWorkspace();
+  const runs = path.join(workspace, ".orchestrator", "runs");
+  fs.symlinkSync(outside, runs, "dir");
+  assert.throws(
+    () => assertInsideBound(path.join(runs, "run-1", "state.json"), { absPath: workspace }, "runsDir"),
+    /符号链接逃逸/,
+  );
 });

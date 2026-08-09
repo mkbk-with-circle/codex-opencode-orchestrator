@@ -38,7 +38,7 @@ export function runLockPath(workspace: string, runId: string): string {
 
 export function writeRun(run: RunStateV2): void {
   run.updatedAt = new Date().toISOString();
-  atomicWriteJson(runStatePath(run.workspace, run.id), run);
+  atomicWriteJson(runStatePath(run.workspace, run.id), run, 0o600);
 }
 
 export function readRun(workspace: string, runId: string): RunStateV2 {
@@ -68,7 +68,15 @@ export function listRuns(workspace: string): RunStateV2[] {
 function appendEventsUnlocked(run: RunStateV2, drafts: EventDraft[]): RunEventV2[] {
   if (!drafts.length) return [];
   const file = eventsPath(run.workspace, run.id);
-  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+  fs.chmodSync(path.dirname(file), 0o700);
+  if (fs.existsSync(file)) {
+    const existing = fs.readFileSync(file, "utf8");
+    if (existing && !existing.endsWith("\n")) {
+      const lastComplete = existing.lastIndexOf("\n");
+      fs.truncateSync(file, lastComplete < 0 ? 0 : lastComplete + 1);
+    }
+  }
   const events = drafts.map((draft) => {
     const event: RunEventV2 = {
       eventId: randomUUID(),
@@ -92,7 +100,8 @@ function appendEventsUnlocked(run: RunStateV2, drafts: EventDraft[]): RunEventV2
 export function createRun(run: RunStateV2): RunEventV2[] {
   const stateFile = runStatePath(run.workspace, run.id);
   if (fs.existsSync(stateFile)) throw new Error(`run_exists: ${run.id}`);
-  fs.mkdirSync(runDirectory(run.workspace, run.id), { recursive: true });
+  fs.mkdirSync(runDirectory(run.workspace, run.id), { recursive: true, mode: 0o700 });
+  fs.chmodSync(runDirectory(run.workspace, run.id), 0o700);
   return withLock(runLockPath(run.workspace, run.id), () => {
     const events = appendEventsUnlocked(run, [
       { type: "run.started", payload: { planId: run.planId } },
@@ -123,9 +132,10 @@ export function readEvents(
 ): RunEventV2[] {
   const file = eventsPath(workspace, runId);
   if (!fs.existsSync(file)) return [];
-  return fs
-    .readFileSync(file, "utf8")
-    .split("\n")
+  const raw = fs.readFileSync(file, "utf8");
+  const lines = raw.split("\n");
+  if (raw && !raw.endsWith("\n")) lines.pop();
+  return lines
     .filter(Boolean)
     .map((line) => JSON.parse(line) as RunEventV2)
     .filter((event) => event.seq > afterSeq)
@@ -144,7 +154,7 @@ export function writeReviewCursor(workspace: string, runId: string, seq: number)
     runId,
     seq,
     updatedAt: new Date().toISOString(),
-  });
+  }, 0o600);
 }
 
 const ALLOWED_TRANSITIONS: Record<PhaseStatus, PhaseStatus[]> = {

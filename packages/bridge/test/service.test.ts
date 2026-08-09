@@ -111,6 +111,20 @@ test("starting an already running phase is idempotent", () => {
   });
 });
 
+test("phase reporting cannot bypass the bound workspace", () => {
+  const workspace = tempWorkspace();
+  const other = tempWorkspace();
+  const planPath = planFixture(workspace);
+  approvePlan(planPath);
+  withBoundWorkspace(workspace, () => {
+    const started = startRunV2({ planPath, executorId: "mock" }) as { run: { id: string } };
+    assert.throws(
+      () => phaseStartV2({ runId: started.run.id, phaseId: "P01", workspace: other }),
+      /workspace_not_bound/,
+    );
+  });
+});
+
 test("a stalled executor session can be replaced unless a human hold is open", async () => {
   const workspace = tempWorkspace();
   const planPath = planFixture(workspace);

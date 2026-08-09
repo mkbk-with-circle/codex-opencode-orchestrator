@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
 import test from "node:test";
 import { approvePlan, parsePlan } from "../src/v2/plan.js";
 import { allPhasesAccepted, computeAuthorizedWindow } from "../src/v2/scheduler.js";
@@ -38,6 +40,9 @@ test("state transitions and event journal survive reload", () => {
   const planPath = planFixture(workspace);
   const run = fixtureRun(workspace, planPath);
   createRun(run);
+  assert.equal(fs.statSync(path.join(workspace, ".orchestrator", "runs", run.id)).mode & 0o777, 0o700);
+  assert.equal(fs.statSync(path.join(workspace, ".orchestrator", "runs", run.id, "state.json")).mode & 0o777, 0o600);
+  assert.equal(fs.statSync(path.join(workspace, ".orchestrator", "runs", run.id, "events.jsonl")).mode & 0o777, 0o600);
   mutateRun(workspace, run.id, (current) => {
     transitionPhase(current, "P01", "ready");
     return { result: null, events: [{ type: "phase.ready", phaseId: "P01" }] };
@@ -66,4 +71,19 @@ test("strict and batch windows respect order and accepted dependencies", () => {
   assert.deepEqual(computeAuthorizedWindow(plan, strictRun), ["P02"]);
   strictRun.phases.P02.status = "accepted";
   assert.equal(allPhasesAccepted(strictRun), true);
+});
+
+test("event journal recovers an incomplete trailing write", () => {
+  const workspace = tempWorkspace();
+  const planPath = planFixture(workspace);
+  const run = fixtureRun(workspace, planPath);
+  createRun(run);
+  const eventFile = path.join(workspace, ".orchestrator", "runs", run.id, "events.jsonl");
+  fs.appendFileSync(eventFile, '{"incomplete":');
+  assert.deepEqual(readEvents(workspace, run.id).map((event) => event.seq), [1]);
+  mutateRun(workspace, run.id, (current) => ({
+    result: null,
+    events: [{ type: "phase.ready", phaseId: "P01" }],
+  }));
+  assert.deepEqual(readEvents(workspace, run.id).map((event) => event.seq), [1, 2]);
 });

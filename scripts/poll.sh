@@ -5,6 +5,7 @@
 #
 # 有 plan 变更才 resume 当前会话；无变更不调模型。
 set -euo pipefail
+umask 077
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck disable=SC1091
@@ -15,7 +16,7 @@ STATE_DIR="${HOME}/.config/codex-opencode-orchestrator/poll"
 PID_FILE="$STATE_DIR/poll.pid"
 META_FILE="$STATE_DIR/poll.json"
 LOG_FILE="$STATE_DIR/poll.log"
-mkdir -p "$STATE_DIR"
+secure_state_dir "$STATE_DIR"
 
 latest_tui_session_id() {
   python3 - "$1" <<'PY'
@@ -58,11 +59,10 @@ cmd_stop() {
   if [[ -f "$PID_FILE" ]]; then
     local pid
     pid="$(cat "$PID_FILE" 2>/dev/null || true)"
-    if [[ -n "${pid:-}" ]] && kill -0 "$pid" 2>/dev/null; then
-      kill "$pid" 2>/dev/null || true
-      sleep 0.2
-      kill -9 "$pid" 2>/dev/null || true
+    if stop_managed_process "$pid" "$SCRIPT_DIR/poll-daemon.sh"; then
       echo "已停止轮询 pid=$pid"
+    elif [[ -n "${pid:-}" ]] && kill -0 "$pid" 2>/dev/null; then
+      echo "拒绝停止 pid=$pid：它不是本项目的 poll daemon" >&2
     else
       echo "没有正在运行的轮询（pid 无效）"
     fi
@@ -120,6 +120,8 @@ cmd_start() {
   export POLL_PID_FILE="$PID_FILE"
   export POLL_SCRIPT_DIR="$SCRIPT_DIR"
 
+  touch "$LOG_FILE"
+  chmod 600 "$LOG_FILE"
   nohup bash "$SCRIPT_DIR/poll-daemon.sh" >>"$LOG_FILE" 2>&1 &
   local bg=$!
   # daemon rewrites PID_FILE to its own $$
@@ -143,6 +145,7 @@ meta = {
 open('''$META_FILE''','w').write(json.dumps(meta, ensure_ascii=False, indent=2)+'\n')
 print(json.dumps(meta, ensure_ascii=False, indent=2))
 "
+  chmod 600 "$PID_FILE" "$META_FILE"
   echo "POLL_STARTED — plan / needs-user 变更时唤醒；取消: orch poll stop"
 }
 
@@ -150,7 +153,7 @@ case "${1:-}" in
   start) shift; cmd_start "$@" ;;
   stop|cancel) cmd_stop ;;
   status)
-    if [[ -f "$PID_FILE" ]] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
+    if [[ -f "$PID_FILE" ]] && pid_matches_script "$(cat "$PID_FILE")" "$SCRIPT_DIR/poll-daemon.sh"; then
       echo "running"; cat "$META_FILE" 2>/dev/null || true
     else
       echo "stopped"

@@ -7,6 +7,7 @@
 #   orch session pin <name>    给本仓最近会话起别名
 #   orch session last          打印本仓最近会话 id
 set -euo pipefail
+umask 077
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck disable=SC1091
@@ -14,7 +15,7 @@ source "$SCRIPT_DIR/lib/common.sh"
 
 ROOT="$(orch_root)"
 REG_DIR="${HOME}/.config/codex-opencode-orchestrator/sessions"
-mkdir -p "$REG_DIR"
+secure_state_dir "$REG_DIR"
 
 workspace_abs() {
   local w="${TARGET_WORKSPACE:-${ORCHESTRATOR_TARGET_WORKSPACE:-$PWD}}"
@@ -93,6 +94,7 @@ save_registry() {
   local f
   f="$(reg_file "$ws")"
   echo "$json" >"$f"
+  chmod 600 "$f"
 }
 
 cmd_list() {

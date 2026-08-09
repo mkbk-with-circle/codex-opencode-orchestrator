@@ -256,13 +256,27 @@ export function requireBoundWorkspace(root = repoRoot()): BoundWorkspace {
 
 /** Plans live under the bound business workspace. */
 export function ensureBoundPlansDir(bound: BoundWorkspace): string {
+  assertInsideBound(bound.plansDir, bound, "plansDir");
   fs.mkdirSync(bound.plansDir, { recursive: true });
   return bound.plansDir;
 }
 
+function canonicalPathForContainment(filePath: string): string {
+  let existing = path.resolve(filePath);
+  const suffix: string[] = [];
+  while (!fs.existsSync(existing)) {
+    const parent = path.dirname(existing);
+    if (parent === existing) break;
+    suffix.unshift(path.basename(existing));
+    existing = parent;
+  }
+  const realExisting = fs.realpathSync(existing);
+  return path.resolve(realExisting, ...suffix);
+}
+
 export function assertInsideBound(
   fileAbs: string,
-  bound: BoundWorkspace,
+  bound: Pick<BoundWorkspace, "absPath">,
   label = "path",
 ): void {
   const file = path.resolve(fileAbs);
@@ -272,6 +286,14 @@ export function assertInsideBound(
   if (file !== bound.absPath && !file.startsWith(root)) {
     throw new Error(
       `${label} 必须位于已绑定工作目录内: ${bound.absPath}（收到: ${file}）`,
+    );
+  }
+  const realRoot = fs.realpathSync(bound.absPath);
+  const realFile = canonicalPathForContainment(file);
+  const canonicalPrefix = realRoot.endsWith(path.sep) ? realRoot : realRoot + path.sep;
+  if (realFile !== realRoot && !realFile.startsWith(canonicalPrefix)) {
+    throw new Error(
+      `${label} 通过符号链接逃逸已绑定工作目录: ${bound.absPath}（解析为: ${realFile}）`,
     );
   }
 }

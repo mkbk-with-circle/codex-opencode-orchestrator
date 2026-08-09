@@ -62,3 +62,21 @@ test("OpenCode HTTP adapter follows the pinned server request contract", async (
     await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
   }
 });
+
+test("OpenCode HTTP poll reports an unreachable server as failed", async () => {
+  const server = http.createServer();
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  assert.ok(address && typeof address === "object");
+  const url = `http://127.0.0.1:${address.port}`;
+  await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  const run: RunState = {
+    id: "run-offline", status: "running", executorId: "profile", executorType: "opencode-http",
+    model: "vendor/model-x", planPath: "/tmp/plan.md", briefPath: "", workspace: "/tmp/business",
+    sessionId: "session-offline", createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+  };
+  const poll = await new OpenCodeHttpExecutor().poll({ run, options: { defaultBaseUrl: url } });
+  assert.equal(poll.activity, "failed");
+  assert.equal(poll.status, "failed");
+  assert.match(poll.summary || "", /opencode_http_unreachable/);
+});
