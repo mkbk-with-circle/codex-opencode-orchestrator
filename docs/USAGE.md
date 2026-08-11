@@ -2,6 +2,8 @@
 
 > v2 是默认工作流。旧 `dispatch/status/review` 仅用于兼容已有 Run。
 
+> 执行权默认属于 OpenCode。Codex 只能规划与审查；用户需要 Codex 临时或长期直接实施时，必须在独立终端显式运行 `orch authority grant` 或 `orch authority allow`，并可随时用 `orch authority return` 恢复。
+
 ```text
 编排仓（本仓库）  → Skills / MCP / orch / 配置
 业务仓（你的项目）→ 代码与 plan / brief / runs

@@ -11,6 +11,7 @@ description: >
 3. 调用 `start_run_v2`，默认 strict。只有用户明确要求时传 `mode=batch` 和 `batchSize`。
 4. 展示 `runId`、workspace、executionMode 和 `authorizedPhaseIds`。
 5. 调用 `dispatch_window_v2`。它只能发送授权 Phase，不得使用旧 `dispatch` 发送整份 Plan。
+   - 若 execution authority 属于 Codex，停止派工；只有用户运行 `orch authority return` 后才能交回 OpenCode。
 6. OpenCode 只可 `phase_start` / `phase_report`；它的 idle、文字自评和 `[x]` 都不是 Codex 验收。
 7. 每个 `phase.implemented` 必须进入 `$opencode-review`；accept 后才派下一窗口。
 

@@ -37,6 +37,11 @@
 | `orch plan approve --plan <task>` | 用户确认后冻结契约 |
 | `orch run start --plan <task> [--mode strict\|batch]` | 创建 Run 和授权窗口 |
 | `orch run dispatch --run <id>` | 只把授权窗口交给 OpenCode |
+| `orch authority status --run <id>` | 查看当前执行者和授权有效期 |
+| `orch authority grant ...` | 用户临时授予 Codex 当前 Phase 执行权 |
+| `orch authority allow ...` | 用户长期切换为 Codex 执行 |
+| `orch authority finish ...` | Codex 上报其实施结果；仍由后续 review 验收 |
+| `orch authority return ...` | 恢复 OpenCode-only 默认策略 |
 | `orch run status --run <id>` | 查看完整性、Phase 和事件 |
 | `orch run pause\|resume\|cancel --run <id>` | 控制 Run |
 | `orch phase start\|report ...` | OpenCode 受控上报接口 |

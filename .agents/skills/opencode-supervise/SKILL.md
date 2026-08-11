@@ -15,3 +15,4 @@ description: >
 7. 用户要求暂停/恢复/取消时使用 `pause_run_v2` / `resume_run_v2` / `cancel_run_v2`。
 8. executor 持续卡死且没有 open hold 时，可用 `replace_run_session_v2` 保留 Run/Phase/文件状态并更换会话；有 keepAlive 现场时禁止更换。
 9. 不得依赖“最近一次 run”处理多个 Run；已知时始终显式传 runId。
+10. 检查 executionAuthority。Codex 无有效用户授权时只可监督和验收，不得直接实施；Codex 永远不得自行调用授权或延长授权。

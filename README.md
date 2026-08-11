@@ -229,6 +229,37 @@ Codex 的 `review_phase`、`retry_phase`、`complete_run_v2` 不会暴露给 Ope
 
 这是职责和权限分层，不是操作系统级安全沙箱。不可信代码仍应放进容器、虚拟机或独立系统账号运行。
 
+### Codex 执行权硬门禁
+
+默认 `OpenCode-only`：Codex 只能写 Plan、派工、只读检查和验收，不能直接修改业务仓或运行 Phase 的实施命令。安装程序会在 `~/.codex/hooks.json` 注册 `PreToolUse` 门禁；Orchestrator 状态机同时拒绝错误执行者，形成双重约束。Codex 不能通过对话自行解除门禁。
+
+用户可在**独立终端**短期授权当前 Run 的一个 Phase：
+
+```bash
+orch authority grant --run <runId> --phase P02 --minutes 30 --reason "OpenCode 故障，允许 Codex 临时修复"
+orch authority status --run <runId>
+```
+
+临时授权最多 24 小时，绑定 `Run + Phase`；到期立即停止放行，Phase 报告 complete 后自动把后续执行权归还 OpenCode。Codex 完成实施后运行：
+
+```bash
+orch authority finish --run <runId> --phase P02 --comment "已完成" --evidence "npm test passed"
+```
+
+长期解除默认限制：
+
+```bash
+orch authority allow --run <runId> --phase P02 --reason "本项目后续由 Codex 直接实施"
+```
+
+长期模式仍保持单写者：OpenCode dispatch 会被拒绝。恢复默认职责分离：
+
+```bash
+orch authority return --run <runId> --reason "恢复 OpenCode 执行"
+```
+
+每次授予和归还都会写入 Run 事件；实施结果记录 `implementedBy`。按照 Codex 官方说明，`PreToolUse` 可在 Bash、`apply_patch` 和本地工具执行前拒绝调用，但特殊工具路径可能不经过默认 hook，因此本项目仍结合状态机、路径审计和单执行者规则；它不是操作系统级隔离。[Codex Hooks 官方文档](https://developers.openai.com/codex/hooks/)
+
 ## 密码、验证码与保持现场
 
 不要把账号、密码、Cookie、Token 或验证码写进 Plan、brief、源码、Git 或普通日志。

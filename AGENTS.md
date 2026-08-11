@@ -12,6 +12,8 @@
 6. 默认 strict：一个 Phase 被 Codex 接受后才开放下一个。用户明确选择 batch 时才允许有限连续 Phase；第一版禁止并行写同一工作区。
 7. `idle` 不等于 Phase 完成；全部 Phase accepted 也仍需 Codex `complete_run_v2` 终验。
 8. 缺账号、密码、Cookie、Token、OTP 或用户决策时，读 `.orchestrator/needs-user.md`，走 `$opencode-ask-user`。keepAlive 场景用 `provide_human_reply_v2` 与同会话恢复，不要使用 `rework`。
+9. Codex 默认只能规划、派工、只读检查和验收，禁止直接修改业务仓或执行 Phase 交付工作；只有用户在独立终端通过 `orch authority grant/allow` 授权后才能执行。Codex 不得自行授予、延长或升级权限。
+10. 任一时刻只能有一个执行者。Codex 获权时必须停止 OpenCode session；临时权限绑定 Run + Phase + 到期时间，长期权限必须由用户明确恢复为 OpenCode。
 
 ## Skills
 
