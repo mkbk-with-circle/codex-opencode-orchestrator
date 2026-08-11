@@ -79,6 +79,18 @@ case "$CMD" in
       *) echo "未知 run 子命令: $sub（start|dispatch|model|replace-session|status|list|poll|reply|complete|pause|resume|cancel）" >&2; exit 1 ;;
     esac
     ;;
+  authority)
+    shift
+    sub="${1:-status}"; shift || true
+    case "$sub" in
+      status) exec bash "$ROOT/bin/orch" bridge authority-status "$@" ;;
+      grant) exec bash "$ROOT/bin/orch" bridge authority-grant "$@" ;;
+      allow) exec bash "$ROOT/bin/orch" bridge authority-grant --persistent "$@" ;;
+      finish) exec bash "$ROOT/bin/orch" bridge authority-finish "$@" ;;
+      return|enforce) exec bash "$ROOT/bin/orch" bridge authority-return "$@" ;;
+      *) echo "未知 authority 子命令: $sub（status|grant|allow|finish|return）" >&2; exit 1 ;;
+    esac
+    ;;
   phase)
     shift
     sub="${1:-status}"; shift || true
@@ -178,6 +190,7 @@ orch — Codex ↔ OpenCode Orchestrator
 控制面
   orch plan validate|approve|migrate  v2 Plan 校验、冻结与 v1 迁移
   orch run start|dispatch|status|poll|reply|pause|resume|cancel|complete
+  orch authority status|grant|allow|finish|return
   orch phase start|report|acceptance|review|retry
   orch bridge <子命令>         如 status / dispatch / resume / mark-complete
   orch doctor | install | smoke | help

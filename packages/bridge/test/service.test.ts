@@ -9,11 +9,15 @@ import {
   completeRunV2,
   acknowledgeSupervisorEventV2,
   dispatchWindowV2,
+  executionAuthorityStatusV2,
+  grantCodexExecutionV2,
   pendingSupervisorEventsV2,
   phaseReportV2,
   phaseStartV2,
   provideHumanReplyV2,
   replaceRunSessionV2,
+  reportCodexExecutionV2,
+  returnExecutionToOpenCodeV2,
   reviewPhaseV2,
   retryPhaseV2,
   startRunV2,
@@ -108,6 +112,43 @@ test("starting an already running phase is idempotent", () => {
       readEvents(workspace, started.run.id).filter((event) => event.type === "phase.started").length,
       1,
     );
+  });
+});
+
+test("Codex execution requires a user grant and temporary authority returns after reporting", async () => {
+  const workspace = tempWorkspace();
+  const planPath = planFixture(workspace);
+  approvePlan(planPath);
+  await withBoundWorkspaceAsync(workspace, async () => {
+    const started = startRunV2({ planPath, executorId: "mock" }) as { run: { id: string } };
+    const runId = started.run.id;
+    assert.throws(
+      () => reportCodexExecutionV2({ runId, phaseId: "P01", outcome: "complete" }),
+      /codex_execution_forbidden/,
+    );
+    await grantCodexExecutionV2({ runId, phaseId: "P01", kind: "temporary", minutes: 5, reason: "user requested direct fix" });
+    await assert.rejects(() => dispatchWindowV2({ runId }), /execution_authority_codex/);
+    assert.throws(() => phaseReportV2({ runId, phaseId: "P01", outcome: "complete" }), /execution_authority_codex/);
+    reportCodexExecutionV2({ runId, phaseId: "P01", outcome: "complete", comment: "done by Codex" });
+    const status = executionAuthorityStatusV2({ runId }) as { authority: { owner: string }; codexMayExecute: boolean };
+    assert.equal(status.authority.owner, "opencode");
+    assert.equal(status.codexMayExecute, false);
+  });
+});
+
+test("persistent Codex authority can be explicitly returned to OpenCode", async () => {
+  const workspace = tempWorkspace();
+  const planPath = planFixture(workspace);
+  approvePlan(planPath);
+  await withBoundWorkspaceAsync(workspace, async () => {
+    const started = startRunV2({ planPath, executorId: "mock" }) as { run: { id: string } };
+    const runId = started.run.id;
+    await grantCodexExecutionV2({ runId, phaseId: "P01", kind: "persistent", reason: "user persistent override" });
+    const returned = returnExecutionToOpenCodeV2({ runId, reason: "user restored separation" }) as { run: { executionAuthority: { owner: string } } };
+    assert.equal(returned.run.executionAuthority.owner, "opencode");
+    const events = readEvents(workspace, runId).map((event) => event.type);
+    assert.ok(events.includes("authority.granted"));
+    assert.ok(events.includes("authority.returned"));
   });
 });
 

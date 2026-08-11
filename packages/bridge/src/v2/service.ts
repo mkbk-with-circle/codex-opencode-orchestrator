@@ -43,6 +43,7 @@ import {
 import { atomicWrite, atomicWriteJson } from "./fs.js";
 import { allPhasesAccepted, computeAuthorizedWindow } from "./scheduler.js";
 import type {
+  ExecutionAuthorityV2,
   ExecutionMode,
   PhaseRuntime,
   ReviewVerdict,
@@ -53,6 +54,47 @@ function getAdapter(type: string): ExecutorAdapter {
   if (type === "mock") return new MockExecutor();
   if (type === "opencode-http") return new OpenCodeHttpExecutor();
   throw new Error(`unknown_executor_type: ${type}`);
+}
+
+type WorkspaceAuthorityPolicy = {
+  schemaVersion: 1;
+  defaultOwner: "opencode" | "codex";
+  updatedAt: string;
+  reason?: string;
+};
+
+function authorityPolicyPath(workspace: string): string {
+  return path.join(workspace, ".orchestrator", "authority-policy.json");
+}
+
+function readAuthorityPolicy(workspace: string): WorkspaceAuthorityPolicy {
+  const file = authorityPolicyPath(workspace);
+  if (!fs.existsSync(file)) return { schemaVersion: 1, defaultOwner: "opencode", updatedAt: new Date(0).toISOString() };
+  const value = JSON.parse(fs.readFileSync(file, "utf8")) as WorkspaceAuthorityPolicy;
+  return value.schemaVersion === 1 && value.defaultOwner === "codex" ? value : { ...value, schemaVersion: 1, defaultOwner: "opencode" };
+}
+
+function writeAuthorityPolicy(workspace: string, defaultOwner: "opencode" | "codex", reason?: string): WorkspaceAuthorityPolicy {
+  const value: WorkspaceAuthorityPolicy = { schemaVersion: 1, defaultOwner, updatedAt: new Date().toISOString(), reason };
+  atomicWriteJson(authorityPolicyPath(workspace), value, 0o600);
+  return value;
+}
+
+function authorityOf(run: RunStateV2): ExecutionAuthorityV2 {
+  return run.executionAuthority || { owner: "opencode", kind: "default" };
+}
+
+function codexLeaseValid(run: RunStateV2): boolean {
+  const authority = authorityOf(run);
+  if (authority.owner !== "codex") return false;
+  if (authority.kind === "persistent") return true;
+  return authority.kind === "temporary" && Boolean(authority.expiresAt) && Date.parse(authority.expiresAt as string) > Date.now();
+}
+
+function requireAuthority(run: RunStateV2, actor: "opencode" | "codex"): void {
+  const authority = authorityOf(run);
+  if (actor === "opencode" && authority.owner !== "opencode") throw new Error(`execution_authority_codex:${authority.phaseId || "workspace"}`);
+  if (actor === "codex" && !codexLeaseValid(run)) throw new Error(authority.owner === "codex" ? "codex_execution_authority_expired" : "codex_execution_forbidden");
 }
 
 function resolvePlan(planPath?: string): string {
@@ -309,6 +351,9 @@ export function startRunV2(args: {
     baselineDirtyPaths: base.dirty,
     baselineDirtyHashes: base.hashes,
     authorizedPhaseIds: [],
+    executionAuthority: readAuthorityPolicy(bound.absPath).defaultOwner === "codex"
+      ? { owner: "codex", kind: "persistent", reason: "workspace persistent policy" }
+      : { owner: "opencode", kind: "default" },
     phases,
     nextSeq: 1,
     createdAt: now,
@@ -331,6 +376,7 @@ export function startRunV2(args: {
 export async function dispatchWindowV2(args: { runId?: string }): Promise<Record<string, unknown>> {
   const run = resolveRun(args.runId);
   guardRunPlan(run);
+  requireAuthority(run, "opencode");
   if (run.status !== "running") throw new Error(`run_not_running: ${run.status}`);
   if (!run.authorizedPhaseIds.length) throw new Error("no_authorized_phases");
   const orch = loadOrchestratorConfig(repoRoot());
@@ -431,9 +477,10 @@ export async function replaceRunSessionV2(args: { runId?: string; reason?: strin
   return { ok: true, ...out };
 }
 
-export function phaseStartV2(args: { runId?: string; phaseId: string; workspace?: string }): Record<string, unknown> {
+function phaseStartForActorV2(args: { runId?: string; phaseId: string; workspace?: string }, actor: "opencode" | "codex"): Record<string, unknown> {
   const run = resolveRun(args.runId, args.workspace);
   guardRunPlan(run);
+  requireAuthority(run, actor);
   const snapshot = phaseSnapshot(run.workspace);
   const out = mutateRun<
     { violation: string } | { phaseId: string; attempt: number; idempotent?: boolean }
@@ -469,6 +516,10 @@ export function phaseStartV2(args: { runId?: string; phaseId: string; workspace?
     throw new Error(`protocol_violation: ${args.phaseId}: ${(out.result as { violation: string }).violation}`);
   }
   return { ok: true, ...out };
+}
+
+export function phaseStartV2(args: { runId?: string; phaseId: string; workspace?: string }): Record<string, unknown> {
+  return phaseStartForActorV2(args, "opencode");
 }
 
 function protocolViolation(run: RunStateV2, phaseId: string, reason: string) {
@@ -549,9 +600,10 @@ export function phaseReportV2(args: {
   needUser?: string;
   keepAlive?: boolean;
   holdKind?: string;
-}): Record<string, unknown> {
+}, actor: "opencode" | "codex" = "opencode"): Record<string, unknown> {
   const run = resolveRun(args.runId, args.workspace);
   guardRunPlan(run);
+  requireAuthority(run, actor);
   const outside = unauthorizedChangedPaths(run, args.phaseId);
   const runtime = run.phases[args.phaseId];
   const artifactDir = path.join(runDirectory(run.workspace, run.id), "artifacts");
@@ -582,12 +634,16 @@ export function phaseReportV2(args: {
     }
     phase.comment = args.comment?.trim() || "";
     phase.evidence = (args.evidence || []).map((item) => item.trim()).filter(Boolean);
+    phase.implementedBy = actor;
     let eventType: "phase.implemented" | "phase.attempt_failed" | "phase.blocked";
     if (args.outcome === "complete") {
       transitionPhase(current, args.phaseId, "implemented");
       phase.implementedAt = new Date().toISOString();
       eventType = "phase.implemented";
       current.authorizedPhaseIds = current.authorizedPhaseIds.filter((id) => id !== args.phaseId);
+      if (actor === "codex" && authorityOf(current).kind === "temporary") {
+        current.executionAuthority = { owner: "opencode", kind: "default" };
+      }
     } else if (args.outcome === "failed") {
       transitionPhase(current, args.phaseId, "attempt_failed");
       eventType = "phase.attempt_failed";
@@ -619,14 +675,117 @@ export function phaseReportV2(args: {
         type: eventType,
         phaseId: args.phaseId,
         attempt: phase.attempt,
-        payload: { comment: phase.comment, evidence: phase.evidence },
-      }],
+        payload: { comment: phase.comment, evidence: phase.evidence, implementedBy: actor },
+      }, ...(actor === "codex" && args.outcome === "complete" && authorityOf(current).owner === "opencode"
+        ? [{ type: "authority.returned" as const, phaseId: args.phaseId, payload: { reason: "temporary grant ended at phase report" } }]
+        : [])],
     };
   });
   if ((out.result as { violation?: string }).violation) {
     throw new Error(`protocol_violation: ${args.phaseId}: ${(out.result as { violation: string }).violation}`);
   }
   return { ok: true, ...out };
+}
+
+export async function grantCodexExecutionV2(args: {
+  runId?: string;
+  phaseId: string;
+  kind: "temporary" | "persistent";
+  minutes?: number;
+  reason: string;
+}): Promise<Record<string, unknown>> {
+  const run = resolveRun(args.runId);
+  guardRunPlan(run);
+  if (!args.reason.trim()) throw new Error("authority_reason_required");
+  const phase = run.phases[args.phaseId];
+  if (!phase || !["ready", "running", "blocked", "attempt_failed", "review_failed"].includes(phase.status)) {
+    throw new Error(`phase_not_claimable:${args.phaseId}:${phase?.status || "missing"}`);
+  }
+  const holdPath = orchestratorPaths(run.workspace).hold;
+  if (fs.existsSync(holdPath)) {
+    const hold = JSON.parse(fs.readFileSync(holdPath, "utf8")) as { status?: string };
+    if (hold.status === "open") throw new Error("human_hold_open");
+  }
+  let aborted: { ok: boolean; summary: string } | undefined;
+  if (run.sessionId) {
+    const orch = loadOrchestratorConfig(repoRoot());
+    const resolved = resolveExecutor(run.executorId, orch.default_executor, repoRoot());
+    aborted = await getAdapter(resolved.def.type).abort({ run: legacyRun(run), options: resolved.def.options });
+  }
+  const now = new Date();
+  const minutes = Math.max(1, Math.min(24 * 60, Math.floor(args.minutes || 30)));
+  const authority: ExecutionAuthorityV2 = {
+    owner: "codex",
+    kind: args.kind,
+    phaseId: args.phaseId,
+    grantedAt: now.toISOString(),
+    expiresAt: args.kind === "temporary" ? new Date(now.getTime() + minutes * 60_000).toISOString() : undefined,
+    reason: args.reason.trim(),
+  };
+  if (args.kind === "persistent") writeAuthorityPolicy(run.workspace, "codex", authority.reason);
+  const claimed = mutateRun(run.workspace, run.id, (current) => {
+    const runtime = current.phases[args.phaseId];
+    if (["blocked", "attempt_failed", "review_failed"].includes(runtime.status)) transitionPhase(current, args.phaseId, "ready");
+    current.executionAuthority = authority;
+    current.sessionId = undefined;
+    current.status = "running";
+    current.authorizedPhaseIds = [args.phaseId];
+    current.summary = `Codex execution authority granted for ${args.phaseId}`;
+    return {
+      result: { authority, aborted },
+      events: [{ type: "authority.granted" as const, phaseId: args.phaseId, payload: { kind: args.kind, expiresAt: authority.expiresAt, reason: authority.reason } }],
+    };
+  });
+  if (claimed.run.phases[args.phaseId].status === "ready") phaseStartForActorV2({ runId: run.id, phaseId: args.phaseId }, "codex");
+  return { ok: true, ...statusV2({ runId: run.id }), authority, aborted };
+}
+
+export function reportCodexExecutionV2(args: {
+  runId?: string;
+  phaseId: string;
+  outcome: "complete" | "failed";
+  comment?: string;
+  evidence?: string[];
+}): Record<string, unknown> {
+  return phaseReportV2(args, "codex");
+}
+
+export function returnExecutionToOpenCodeV2(args: { runId?: string; reason: string }): Record<string, unknown> {
+  const run = resolveRun(args.runId);
+  guardRunPlan(run);
+  if (!args.reason.trim()) throw new Error("authority_reason_required");
+  const policy = writeAuthorityPolicy(run.workspace, "opencode", args.reason.trim());
+  const out = mutateRun(run.workspace, run.id, (current) => {
+    const authority = authorityOf(current);
+    const phaseId = authority.phaseId;
+    if (phaseId && current.phases[phaseId]?.status === "running") {
+      transitionPhase(current, phaseId, "attempt_failed");
+      transitionPhase(current, phaseId, "ready");
+      current.phases[phaseId].comment = "Codex authority returned; OpenCode may continue from existing workspace state";
+      current.authorizedPhaseIds = [phaseId];
+    }
+    current.executionAuthority = { owner: "opencode", kind: "default" };
+    current.summary = "Execution authority returned to OpenCode";
+    return {
+      result: { policy, phaseId },
+      events: [{ type: "authority.returned" as const, phaseId, payload: { reason: args.reason.trim() } }],
+    };
+  });
+  return { ok: true, ...out };
+}
+
+export function executionAuthorityStatusV2(args: { runId?: string } = {}): Record<string, unknown> {
+  const bound = requireBoundWorkspace();
+  const policy = readAuthorityPolicy(bound.absPath);
+  const run = args.runId ? resolveRun(args.runId) : newestRun(bound.absPath);
+  return {
+    ok: true,
+    workspace: bound.absPath,
+    policy,
+    runId: run?.id || null,
+    authority: run ? authorityOf(run) : { owner: policy.defaultOwner, kind: policy.defaultOwner === "codex" ? "persistent" : "default" },
+    codexMayExecute: run ? codexLeaseValid(run) : policy.defaultOwner === "codex",
+  };
 }
 
 export function reviewPhaseV2(args: {

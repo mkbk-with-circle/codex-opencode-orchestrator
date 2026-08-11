@@ -29,6 +29,8 @@ import {
   cancelRunV2,
   completeRunV2,
   dispatchWindowV2,
+  executionAuthorityStatusV2,
+  grantCodexExecutionV2,
   listRunsV2,
   migratePlanV2Tool,
   pendingSupervisorEventsV2,
@@ -39,6 +41,8 @@ import {
   provideHumanReplyV2,
   retryPhaseV2,
   replaceRunSessionV2,
+  reportCodexExecutionV2,
+  returnExecutionToOpenCodeV2,
   resumeRunV2,
   runPhaseAcceptanceV2,
   reviewContextV2,
@@ -100,6 +104,30 @@ async function main() {
       break;
     case "run-dispatch":
       console.log(JSON.stringify(await dispatchWindowV2({ runId: flag("--run") }), null, 2));
+      break;
+    case "authority-status":
+      console.log(JSON.stringify(executionAuthorityStatusV2({ runId: flag("--run") }), null, 2));
+      break;
+    case "authority-grant":
+      console.log(JSON.stringify(await grantCodexExecutionV2({
+        runId: flag("--run"),
+        phaseId: flag("--phase") || "",
+        kind: has("--persistent") ? "persistent" : "temporary",
+        minutes: flag("--minutes") ? Number(flag("--minutes")) : undefined,
+        reason: flag("--reason") || "",
+      }), null, 2));
+      break;
+    case "authority-finish":
+      console.log(JSON.stringify(reportCodexExecutionV2({
+        runId: flag("--run"),
+        phaseId: flag("--phase") || "",
+        outcome: has("--failed") ? "failed" : "complete",
+        comment: flag("--comment"),
+        evidence: listFlag("--evidence"),
+      }), null, 2));
+      break;
+    case "authority-return":
+      console.log(JSON.stringify(returnExecutionToOpenCodeV2({ runId: flag("--run"), reason: flag("--reason") || "" }), null, 2));
       break;
     case "run-model":
       console.log(JSON.stringify(switchRunModelV2({

@@ -83,8 +83,18 @@ export interface PhaseRuntime {
   executorReportStatus?: string;
   reviewSummary?: string;
   gaps: string[];
+  implementedBy?: "opencode" | "codex";
   baselinePaths?: string[];
   baselineHashes?: Record<string, string | null>;
+}
+
+export interface ExecutionAuthorityV2 {
+  owner: "opencode" | "codex";
+  kind: "default" | "temporary" | "persistent";
+  phaseId?: string;
+  grantedAt?: string;
+  expiresAt?: string;
+  reason?: string;
 }
 
 export interface RunStateV2 {
@@ -105,6 +115,7 @@ export interface RunStateV2 {
   baselineDirtyPaths: string[];
   baselineDirtyHashes: Record<string, string | null>;
   authorizedPhaseIds: string[];
+  executionAuthority?: ExecutionAuthorityV2;
   phases: Record<string, PhaseRuntime>;
   nextSeq: number;
   createdAt: string;
@@ -132,6 +143,9 @@ export type EventType =
   | "review.rework"
   | "review.needs_user"
   | "human.reply_provided"
+  | "authority.granted"
+  | "authority.returned"
+  | "authority.expired"
   | "protocol.violation";
 
 export interface RunEventV2 {
