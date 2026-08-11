@@ -86,6 +86,13 @@ else
   bad "未注册 MCP opencode_bridge → bash scripts/install.sh"
 fi
 
+HOOK_CFG="${CODEX_HOME:-$HOME/.codex}/hooks.json"
+if [[ -f "$HOOK_CFG" ]] && grep -Fq 'codex-opencode execution authority guard' "$HOOK_CFG"; then
+  ok "Codex execution authority hook 已安装"
+else
+  bad "缺少 Codex execution authority hook → bash scripts/install.sh"
+fi
+
 # Skills
 SKILL_HOME="$HOME/.agents/skills"
 for name in opencode-dispatch opencode-supervise opencode-review; do

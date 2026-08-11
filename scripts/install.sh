@@ -118,6 +118,10 @@ if [[ "$SKIP_SKILLS" -eq 0 ]]; then
   done
 fi
 
+echo
+echo "== install Codex execution authority hook =="
+node "$ROOT/scripts/install-codex-hook.mjs" "$ROOT"
+
 # --- 可选业务仓 ---
 if [[ -n "$WORKSPACE" ]]; then
   echo
